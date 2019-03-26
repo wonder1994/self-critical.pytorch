@@ -17,7 +17,7 @@ import models
 from dataloader import *
 import eval_utils
 import misc.utils as utils
-from misc.rewards import init_scorer, get_self_critical_reward
+from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss
 
 try:
     import tensorboardX as tb
@@ -62,6 +62,7 @@ def train(opt):
     loss_history = histories.get('loss_history', {})
     lr_history = histories.get('lr_history', {})
     ss_prob_history = histories.get('ss_prob_history', {})
+    variance_history = histories.get('variance_history', {})
 
     loader.iterators = infos.get('iterators', loader.iterators)
     loader.split_ix = infos.get('split_ix', loader.split_ix)
@@ -69,7 +70,7 @@ def train(opt):
         best_val_score = infos.get('best_val_score', None)
 
     model = models.setup(opt).cuda()
-    dp_model = torch.nn.DataParallel(model)
+    dp_model = model
 
     update_lr_flag = True
     # Assure in training mode
@@ -82,6 +83,9 @@ def train(opt):
     # Load the optimizer
     if vars(opt).get('start_from', None) is not None and os.path.isfile(os.path.join(opt.start_from,"optimizer.pth")):
         optimizer.load_state_dict(torch.load(os.path.join(opt.start_from, 'optimizer.pth')))
+
+    first_order = 0
+    second_order = 0
 
     while True:
         if update_lr_flag:
@@ -107,11 +111,9 @@ def train(opt):
                 sc_flag = False
 
             update_lr_flag = False
-                
-        start = time.time()
+
         # Load data from train split (0)
         data = loader.get_batch('train')
-        print('Read data:', time.time() - start)
 
         torch.cuda.synchronize()
         start = time.time()
@@ -119,27 +121,44 @@ def train(opt):
         tmp = [data['fc_feats'], data['att_feats'], data['labels'], data['masks'], data['att_masks']]
         tmp = [_ if _ is None else torch.from_numpy(_).cuda() for _ in tmp]
         fc_feats, att_feats, labels, masks, att_masks = tmp
-        
+
         optimizer.zero_grad()
         if not sc_flag:
             loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:])
         else:
-            gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
-            reward = get_self_critical_reward(dp_model, fc_feats, att_feats, att_masks, data, gen_result, opt)
-            loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
+            if opt.rl_type == 'self_critic':
+                gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
+                reward = get_self_critical_reward(dp_model, fc_feats, att_feats, att_masks, data, gen_result, opt)
+                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
+            elif opt.rl_type == 'reinforce':
+                gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
+                reward = get_reward(data, gen_result, opt)
+                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
+            elif opt.rl_type == 'arsm':
+                loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                reward = np.zeros([2,2])
 
         loss.backward()
-        utils.clip_gradient(optimizer, opt.grad_clip)
+        ## compute variance
+        gradient = torch.zeros([0])
+        for i in model.parameters():
+            gradient = torch.cat((gradient, i.grad.view(-1)), 0)
+        first_order = 0.99 * first_order + 0.01 * gradient
+        second_order = 0.99 * second_order + 0.01 * gradient.pow(2)
+        variance = torch.mean(second_order - first_order.pow(2))
+        if opt.rl_type != 'arsm' or not sc_flag:
+            utils.clip_gradient(optimizer, opt.grad_clip)
         optimizer.step()
         train_loss = loss.item()
         torch.cuda.synchronize()
         end = time.time()
-        if not sc_flag:
-            print("iter {} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
-                .format(iteration, epoch, train_loss, end - start))
-        else:
-            print("iter {} (epoch {}), avg_reward = {:.3f}, time/batch = {:.3f}" \
-                .format(iteration, epoch, np.mean(reward[:,0]), end - start))
+        if (iteration % opt.losses_log_every == 0):
+            if not sc_flag:
+                print("iter {} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
+                    .format(iteration, epoch, train_loss, end - start))
+            else:
+                print("iter {} (epoch {}), avg_reward = {:.3f}, variance = {:.3f}, time/batch = {:.3f}" \
+                    .format(iteration, epoch, np.mean(reward[:,0]), variance, end - start))
 
         # Update the iteration and epoch
         iteration += 1
@@ -154,10 +173,13 @@ def train(opt):
             add_summary_value(tb_summary_writer, 'scheduled_sampling_prob', model.ss_prob, iteration)
             if sc_flag:
                 add_summary_value(tb_summary_writer, 'avg_reward', np.mean(reward[:,0]), iteration)
+                add_summary_value(tb_summary_writer, 'variance', variance, iteration)
 
             loss_history[iteration] = train_loss if not sc_flag else np.mean(reward[:,0])
             lr_history[iteration] = opt.current_lr
             ss_prob_history[iteration] = model.ss_prob
+            variance_history[iteration] = variance
+
 
         # make evaluation on validation set, and save model
         if (iteration % opt.save_checkpoint_every == 0):
@@ -204,6 +226,7 @@ def train(opt):
                 histories['loss_history'] = loss_history
                 histories['lr_history'] = lr_history
                 histories['ss_prob_history'] = ss_prob_history
+                histories['variance'] = variance_history
                 with open(os.path.join(opt.checkpoint_path, 'infos_'+opt.id+'.pkl'), 'wb') as f:
                     cPickle.dump(infos, f)
                 with open(os.path.join(opt.checkpoint_path, 'histories_'+opt.id+'.pkl'), 'wb') as f:

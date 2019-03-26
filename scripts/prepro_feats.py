@@ -45,7 +45,8 @@ preprocess = trn.Compose([
         #trn.ToTensor(),
         trn.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
-
+import sys
+sys.path.append("/home1/06008/xf993/self-critical.pytorch")
 from misc.resnet_utils import myResnet
 import misc.resnet as resnet
 
@@ -78,8 +79,9 @@ def main(params):
       I = np.concatenate((I,I,I), axis=2)
 
     I = I.astype('float32')/255.0
-    I = torch.from_numpy(I.transpose([2,0,1])).cuda()
+    I = torch.from_numpy(I.transpose([2,0,1]))
     I = preprocess(I)
+    I = I.cuda()
     with torch.no_grad():
       tmp_fc, tmp_att = my_resnet(I, params['att_size'])
     # write to pkl

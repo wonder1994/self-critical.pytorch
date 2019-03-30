@@ -20,6 +20,8 @@ def parse_opt():
                                               Note: this file contains absolute paths, be careful when moving files around;
                         'model.ckpt-*'      : file(s) with model definition (created by tf)
                     """)
+    parser.add_argument('--start_from_critic', type=str, default=None,
+                    help='path to the critic pretrain model')
     parser.add_argument('--cached_tokens', type=str, default='coco-train-idxs',
                     help='Cached token file for calculating cider score during self critical training.')
 
@@ -74,6 +76,14 @@ def parse_opt():
                     help='self_critic, reinforce, ars, or arsm')
     parser.add_argument('--rf_demean', type=int, default=0,
                     help='whether demean for reinforce')
+    parser.add_argument('--arm_sample', type=str, default='sample',
+                    help='sample or greedy')
+    parser.add_argument('--pretrain_critic', type=int, default=0,
+                    help='whether pretrain critic')
+    parser.add_argument('--pretrain_critic_steps', type=int, default=50000,
+                    help='steps of pretrain')
+    parser.add_argument('--critic_learning_rate', type=float, default=5e-5,
+                    help='learning rate for critic')
 
 
     #Optimization: for the Language Model

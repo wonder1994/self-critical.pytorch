@@ -18,6 +18,7 @@ from dataloader import *
 import eval_utils
 import misc.utils as utils
 from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss
+from models.CriticModel import CriticModel
 
 try:
     import tensorboardX as tb
@@ -60,6 +61,7 @@ def train(opt):
 
     val_result_history = histories.get('val_result_history', {})
     loss_history = histories.get('loss_history', {})
+    critic_loss_history = histories.get('critic_loss_history', {})
     lr_history = histories.get('lr_history', {})
     ss_prob_history = histories.get('ss_prob_history', {})
     variance_history = histories.get('variance_history', {})
@@ -71,6 +73,61 @@ def train(opt):
 
     model = models.setup(opt).cuda()
     dp_model = model
+
+    critic_model = CriticModel(opt)
+    if vars(opt).get('start_from_critic', None) is not None and False:
+        # check if all necessary files exist
+        assert os.path.isdir(opt.start_from_critic)," %s must be a a path" % opt.start_from_critic
+        critic_model.load_state_dict(torch.load(os.path.join(opt.start_from_critic, 'critic_model.pth')))
+    ####################### Critic pretrain
+    critic_model = critic_model.cuda()
+    critic_optimizer = utils.build_optimizer(critic_model.parameters(), opt)
+    dp_model.eval()
+    critic_iter = 0
+    init_scorer(opt.cached_tokens)
+    critic_model.train()
+    error_sum = 0
+    loss_vector_sum = 0
+    while opt.pretrain_critic == 1:
+        if critic_iter > opt.pretrain_critic_steps:
+            print('****************Finished critic training!')
+            break
+        data = loader.get_batch('train')
+        torch.cuda.synchronize()
+        start = time.time()
+        tmp = [data['fc_feats'], data['att_feats'], data['labels'], data['masks'], data['att_masks']]
+        tmp = [_ if _ is None else torch.from_numpy(_).cuda() for _ in tmp]
+        fc_feats, att_feats, labels, masks, att_masks = tmp
+        critic_optimizer.zero_grad()
+        critic_value, gen_result, _= critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+        reward, std = get_reward(data, gen_result, opt, critic=True)
+        reward = torch.from_numpy(reward).float().cuda()
+        mask = (gen_result > 0).float()
+        mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+        crit_loss = (torch.sum((critic_value[:, 1:] - reward).pow(2) * mask) +
+                     torch.sum((critic_value[:, 0] - reward[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
+        crit_loss.backward()
+        critic_optimizer.step()
+        crit_train_loss = crit_loss.item()
+        torch.cuda.synchronize
+        end = time.time()
+        error_sum += crit_train_loss**0.5-std
+        if (critic_iter % opt.losses_log_every == 0):
+            loss_vector = np.power((torch.sum((critic_value[:, 1:] - reward).pow(2) * mask, 0) / torch.sum(mask + 0.00000000001, 0)).detach().cpu().numpy(), 0.5)
+            loss_vector_sum += loss_vector
+            print("iter {} , crit_train_loss = {:.3f}, difference = {:.3f}, difference_sum = {:.3f}, loss_vector_sum = {}, time/batch = {:.3f}" \
+                .format(critic_iter, crit_train_loss**0.5, crit_train_loss**0.5-std, error_sum,  str(loss_vector_sum), end - start))
+        critic_iter += 1
+
+        # make evaluation on validation set, and save model
+        if (iteration % opt.save_checkpoint_every == 0):
+            if not os.path.isdir(opt.checkpoint_path):
+                os.mkdir(opt.checkpoint_path)
+            checkpoint_path = os.path.join(opt.checkpoint_path, 'critic_model.pth')
+            torch.save(critic_model.state_dict(), checkpoint_path)
+
+
+    ######################### Actor-critical Training
 
     update_lr_flag = True
     # Assure in training mode
@@ -115,6 +172,9 @@ def train(opt):
         # Load data from train split (0)
         data = loader.get_batch('train')
 
+        dp_model.train()
+        critic_model.eval()
+
         torch.cuda.synchronize()
         start = time.time()
 
@@ -137,18 +197,48 @@ def train(opt):
             elif opt.rl_type == 'arsm':
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = np.zeros([2,2])
+            elif opt.rl_type == 'arsm_critic':
+                loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader, critic_model)
+                reward = np.zeros([2, 2])
+            elif opt.rl_type == 'reinforce_critic':
+                critic_value, gen_result, sample_logprobs = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+                reward, std = get_reward(data, gen_result, opt, critic=True)
+                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - critic_value[:,:-1].data)
 
+        #TODO make sure all sampling replaced by greedy for critic
+        #### update the actor
         loss.backward()
         ## compute variance
-        gradient = torch.zeros([0])
+        gradient = torch.zeros([0]).cuda()
         for i in model.parameters():
             gradient = torch.cat((gradient, i.grad.view(-1)), 0)
         first_order = 0.99 * first_order + 0.01 * gradient
         second_order = 0.99 * second_order + 0.01 * gradient.pow(2)
-        variance = torch.mean(second_order - first_order.pow(2))
+        # print(torch.max(torch.abs(gradient)))
+        variance = torch.mean(second_order - first_order.pow(2)).item()
         if opt.rl_type != 'arsm' or not sc_flag:
             utils.clip_gradient(optimizer, opt.grad_clip)
         optimizer.step()
+
+        # ### update the critic
+        if 'critic' in opt.rl_type:
+            dp_model.eval()
+            critic_model.train()
+            utils.set_lr(critic_optimizer, opt.critic_learning_rate)
+            critic_optimizer.zero_grad()
+            critic_value, gen_result, _ = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+            reward, std = get_reward(data, gen_result, opt, critic=True)
+            reward_mean = np.mean(reward)
+            reward_cuda = torch.from_numpy(reward).float().cuda()
+            mask = (gen_result > 0).float()
+            mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+            crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
+                     torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
+            crit_loss.backward()
+            critic_optimizer.step()
+            crit_train_loss = crit_loss.item()
+            error_sum += crit_train_loss ** 0.5 - std
+
         train_loss = loss.item()
         torch.cuda.synchronize()
         end = time.time()
@@ -156,8 +246,16 @@ def train(opt):
             if not sc_flag:
                 print("iter {} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
                     .format(iteration, epoch, train_loss, end - start))
+            elif 'critic' in opt.rl_type:
+                loss_vector = np.power((torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask, 0) / torch.sum(
+                    mask + 0.00000000001, 0)).detach().cpu().numpy(), 0.5)
+                loss_vector_sum += loss_vector
+                print(
+                    "iter {} ,avg_reward = {:.3f}, variance = {:g}, crit_train_loss = {:.3f}, difference = {:.3f}, difference_sum = {:.3f}, loss_vector_sum = {}, time/batch = {:.3f}" \
+                    .format(iteration, reward_mean, variance,crit_train_loss ** 0.5, crit_train_loss ** 0.5 - std, error_sum,
+                            str(loss_vector_sum), end - start))
             else:
-                print("iter {} (epoch {}), avg_reward = {:.3f}, variance = {:.3f}, time/batch = {:.3f}" \
+                print("iter {} (epoch {}), avg_reward = {:.3f}, variance = {:g}, time/batch = {:.3f}" \
                     .format(iteration, epoch, np.mean(reward[:,0]), variance, end - start))
 
         # Update the iteration and epoch
@@ -176,6 +274,7 @@ def train(opt):
                 add_summary_value(tb_summary_writer, 'variance', variance, iteration)
 
             loss_history[iteration] = train_loss if not sc_flag else np.mean(reward[:,0])
+            critic_loss_history[iteration] = crit_train_loss if 'critic' in opt.rl_type else 0
             lr_history[iteration] = opt.current_lr
             ss_prob_history[iteration] = model.ss_prob
             variance_history[iteration] = variance
@@ -207,8 +306,12 @@ def train(opt):
                 if best_val_score is None or current_score > best_val_score:
                     best_val_score = current_score
                     best_flag = True
+                if not os.path.isdir(opt.checkpoint_path):
+                    os.mkdir(opt.checkpoint_path)
                 checkpoint_path = os.path.join(opt.checkpoint_path, 'model.pth')
                 torch.save(model.state_dict(), checkpoint_path)
+                checkpoint_path = os.path.join(opt.checkpoint_path, 'critic_model.pth')
+                torch.save(critic_model.state_dict(), checkpoint_path)
                 print("model saved to {}".format(checkpoint_path))
                 optimizer_path = os.path.join(opt.checkpoint_path, 'optimizer.pth')
                 torch.save(optimizer.state_dict(), optimizer_path)
@@ -224,9 +327,11 @@ def train(opt):
 
                 histories['val_result_history'] = val_result_history
                 histories['loss_history'] = loss_history
+                histories['critic_loss_history'] = critic_loss_history
                 histories['lr_history'] = lr_history
                 histories['ss_prob_history'] = ss_prob_history
                 histories['variance'] = variance_history
+                # histories['variance'] = 0
                 with open(os.path.join(opt.checkpoint_path, 'infos_'+opt.id+'.pkl'), 'wb') as f:
                     cPickle.dump(infos, f)
                 with open(os.path.join(opt.checkpoint_path, 'histories_'+opt.id+'.pkl'), 'wb') as f:

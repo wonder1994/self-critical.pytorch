@@ -5,6 +5,7 @@ from __future__ import print_function
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 import numpy as np
 
@@ -19,7 +20,7 @@ import eval_utils
 import misc.utils as utils
 from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss
 from models.CriticModel import CriticModel
-
+from models.AttCriticModel import AttCriticModel
 try:
     import tensorboardX as tb
 except ImportError:
@@ -32,7 +33,8 @@ def add_summary_value(writer, key, value, iteration):
 
 def train(opt):
     # Deal with feature things before anything
-    opt.use_att = utils.if_use_att(opt.caption_model)
+    # opt.use_att = utils.if_use_att(opt.caption_model)
+    opt.use_att = True
     if opt.use_box: opt.att_feat_size = opt.att_feat_size + 5
 
     loader = DataLoader(opt)
@@ -73,13 +75,17 @@ def train(opt):
 
     model = models.setup(opt).cuda()
     dp_model = model
-
-    critic_model = CriticModel(opt)
-    if vars(opt).get('start_from_critic', None) is not None and False:
-        # check if all necessary files exist
-        assert os.path.isdir(opt.start_from_critic)," %s must be a a path" % opt.start_from_critic
-        critic_model.load_state_dict(torch.load(os.path.join(opt.start_from_critic, 'critic_model.pth')))
     ####################### Critic pretrain
+    ##### Critic with state as input
+    if opt.critic_model == 'state_critic':
+        critic_model = CriticModel(opt)
+    else:
+        critic_model = AttCriticModel(opt)
+    if vars(opt).get('start_from_critic', None) is not None and True:
+        # check if all necessary files exist
+        assert os.path.isdir(opt.start_from_critic), " %s must be a a path" % opt.start_from_critic
+        print(os.path.join(opt.start_from_critic, opt.critic_model + '_model.pth'))
+        critic_model.load_state_dict(torch.load(os.path.join(opt.start_from_critic, opt.critic_model + '_model.pth')))
     critic_model = critic_model.cuda()
     critic_optimizer = utils.build_optimizer(critic_model.parameters(), opt)
     dp_model.eval()
@@ -99,7 +105,20 @@ def train(opt):
         tmp = [_ if _ is None else torch.from_numpy(_).cuda() for _ in tmp]
         fc_feats, att_feats, labels, masks, att_masks = tmp
         critic_optimizer.zero_grad()
-        critic_value, gen_result, _= critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+        if opt.critic_model == 'state_critic':
+            critic_value, gen_result, _= critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+        elif opt.critic_model == 'att_critic':
+            gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0}, mode='sample')
+            gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+            critic_value = critic_model(gen_result_pad, fc_feats, att_feats, False, opt, att_masks)
+        elif opt.critic_model == 'att_critic_vocab':
+            gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0}, mode='sample')
+            gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+            critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks)
+            critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)
+            critic_value = torch.cat([torch.mean(critic_value, 2)[:, 0].unsqueeze(1), critic_mask], 1)
+
+
         reward, std = get_reward(data, gen_result, opt, critic=True)
         reward = torch.from_numpy(reward).float().cuda()
         mask = (gen_result > 0).float()
@@ -120,10 +139,10 @@ def train(opt):
         critic_iter += 1
 
         # make evaluation on validation set, and save model
-        if (iteration % opt.save_checkpoint_every == 0):
+        if (critic_iter % opt.save_checkpoint_every == 0):
             if not os.path.isdir(opt.checkpoint_path):
                 os.mkdir(opt.checkpoint_path)
-            checkpoint_path = os.path.join(opt.checkpoint_path, 'critic_model.pth')
+            checkpoint_path = os.path.join(opt.checkpoint_path, opt.critic_model + '_model.pth')
             torch.save(critic_model.state_dict(), checkpoint_path)
 
 
@@ -181,7 +200,6 @@ def train(opt):
         tmp = [data['fc_feats'], data['att_feats'], data['labels'], data['masks'], data['att_masks']]
         tmp = [_ if _ is None else torch.from_numpy(_).cuda() for _ in tmp]
         fc_feats, att_feats, labels, masks, att_masks = tmp
-
         optimizer.zero_grad()
         if not sc_flag:
             loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:])
@@ -198,15 +216,47 @@ def train(opt):
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = np.zeros([2,2])
             elif opt.rl_type == 'arsm_critic':
+                #print(opt.critic_model)
+                tic = time.time()
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader, critic_model)
+                #print('arm_loss time', str(time.time()-tic))
+                reward = np.zeros([2, 2])
+            elif opt.rl_type == 'critic_vocab_sum':
+                assert opt.critic_model == 'att_critic_vocab'
+                tic = time.time()
+                gen_result, sample_logprobs_total = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0}, total_probs=True,
+                                                       mode='sample') #batch, seq, vocab
+                #print('generation time', time.time()-tic)
+                gen_result_pad = torch.cat(
+                    [gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+                tic = time.time()
+                critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks) #batch, seq, vocab
+                #print('critic time', time.time() - tic)
+                probs = torch.sum(F.softmax(sample_logprobs_total, 2) * critic_value.detach(), 2)
+                mask = (gen_result > 0).float()
+                mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+                loss = -torch.sum(probs * mask) / torch.sum(mask)
                 reward = np.zeros([2, 2])
             elif opt.rl_type == 'reinforce_critic':
-                critic_value, gen_result, sample_logprobs = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
-                reward, std = get_reward(data, gen_result, opt, critic=True)
-                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - critic_value[:,:-1].data)
+                #TODO change the critic to attention
+                if opt.critic_model == 'state_critic':
+                    critic_value, gen_result, sample_logprobs = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+                    reward, std = get_reward(data, gen_result, opt, critic=True)
+                    loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - critic_value[:,:-1].data)
+                elif opt.critic_model == 'att_critic':
+                    gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                           mode='sample')
+                    gen_result_pad = torch.cat(
+                        [gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+                    critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks).squeeze(2)
 
+                    reward, std = get_reward(data, gen_result, opt, critic=True)
+                    loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - critic_value.data)
+        if opt.mle_weights != 0:
+            loss += opt.mle_weights * crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:, 1:], masks[:, 1:])
         #TODO make sure all sampling replaced by greedy for critic
         #### update the actor
+        tic = time.time()
         loss.backward()
         ## compute variance
         gradient = torch.zeros([0]).cuda()
@@ -215,10 +265,11 @@ def train(opt):
         first_order = 0.99 * first_order + 0.01 * gradient
         second_order = 0.99 * second_order + 0.01 * gradient.pow(2)
         # print(torch.max(torch.abs(gradient)))
-        variance = torch.mean(second_order - first_order.pow(2)).item()
+        variance = torch.mean(torch.abs(second_order - first_order.pow(2))).item()
         if opt.rl_type != 'arsm' or not sc_flag:
             utils.clip_gradient(optimizer, opt.grad_clip)
         optimizer.step()
+        #print('optimize time', time.time() - tic)
 
         # ### update the critic
         if 'critic' in opt.rl_type:
@@ -226,18 +277,73 @@ def train(opt):
             critic_model.train()
             utils.set_lr(critic_optimizer, opt.critic_learning_rate)
             critic_optimizer.zero_grad()
-            critic_value, gen_result, _ = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+            if opt.critic_model == 'state_critic':
+                critic_value, gen_result, _ = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+            elif opt.critic_model == 'att_critic':
+                gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                       mode='sample')
+                gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result],
+                                           1)
+                critic_value = critic_model(gen_result_pad, fc_feats, att_feats, False, opt, att_masks).squeeze(2)
+            elif opt.critic_model == 'att_critic_vocab':
+                gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                       mode='sample')
+                gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result],
+                                           1)
+                critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks)
+                critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)
+                critic_value = torch.cat([torch.mean(critic_value, 2)[:, 0].unsqueeze(1), critic_mask], 1)
+
             reward, std = get_reward(data, gen_result, opt, critic=True)
             reward_mean = np.mean(reward)
             reward_cuda = torch.from_numpy(reward).float().cuda()
             mask = (gen_result > 0).float()
             mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+            #print(critic_value.size())
             crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
                      torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
             crit_loss.backward()
             critic_optimizer.step()
             crit_train_loss = crit_loss.item()
             error_sum += crit_train_loss ** 0.5 - std
+            if opt.critic_training_step > 1:
+                for _ in range(opt.critic_training_step):
+                    data = loader.get_batch('train')
+                    tmp = [data['fc_feats'], data['att_feats'], data['labels'], data['masks'], data['att_masks']]
+                    tmp = [_ if _ is None else torch.from_numpy(_).cuda() for _ in tmp]
+                    fc_feats, att_feats, labels, masks, att_masks = tmp
+                    critic_optimizer.zero_grad()
+                    if opt.critic_model == 'state_critic':
+                        critic_value, gen_result, _ = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+                    elif opt.critic_model == 'att_critic':
+                        gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                               mode='sample')
+                        gen_result_pad = torch.cat(
+                            [gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result],
+                            1)
+                        critic_value = critic_model(gen_result_pad, fc_feats, att_feats, False, opt, att_masks).squeeze(
+                            2)
+                    elif opt.critic_model == 'att_critic_vocab':
+                        gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                               mode='sample')
+                        gen_result_pad = torch.cat(
+                            [gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result],
+                            1)
+                        critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks)
+                        critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)
+                        critic_value = torch.cat([torch.mean(critic_value, 2)[:, 0].unsqueeze(1), critic_mask], 1)
+
+                    reward, std = get_reward(data, gen_result, opt, critic=True)
+                    reward_mean = np.mean(reward)
+                    reward_cuda = torch.from_numpy(reward).float().cuda()
+                    mask = (gen_result > 0).float()
+                    mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+                    # print(critic_value.size())
+                    crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
+                                 torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (
+                                            torch.sum(mask) + mask.size(0))
+                    crit_loss.backward()
+                    critic_optimizer.step()
 
         train_loss = loss.item()
         torch.cuda.synchronize()
@@ -310,7 +416,7 @@ def train(opt):
                     os.mkdir(opt.checkpoint_path)
                 checkpoint_path = os.path.join(opt.checkpoint_path, 'model.pth')
                 torch.save(model.state_dict(), checkpoint_path)
-                checkpoint_path = os.path.join(opt.checkpoint_path, 'critic_model.pth')
+                checkpoint_path = os.path.join(opt.checkpoint_path, opt.critic_model + '_model.pth')
                 torch.save(critic_model.state_dict(), checkpoint_path)
                 print("model saved to {}".format(checkpoint_path))
                 optimizer_path = os.path.join(opt.checkpoint_path, 'optimizer.pth')

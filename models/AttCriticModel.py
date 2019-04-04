@@ -265,7 +265,7 @@ class AttCriticModel(nn.Module):
             Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), N),
             lambda x:x,
             nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
-            Generator(d_model, 1)
+            Generator(d_model, tgt_vocab)
         )
         for p in model.parameters():
             if p.dim() > 1:
@@ -303,9 +303,8 @@ class AttCriticModel(nn.Module):
             att_masks = att_masks[:, :max_len].contiguous()
         return att_feats, att_masks
 
-    def _prepare_feature(self, att_feats, att_masks=None, seq=None):
+    def _prepare_feature(self, att_feats, crop, att_masks=None, seq=None):
         att_feats, att_masks = self.clip_att(att_feats, att_masks)
-
         att_feats = pack_wrapper(self.att_embed, att_feats, att_masks)
 
         if att_masks is None:
@@ -314,7 +313,8 @@ class AttCriticModel(nn.Module):
 
         if seq is not None:
             # crop the last one
-            seq = seq[:, :-1]
+            if crop:
+                seq = seq[:, :-1]
             seq_mask = (seq.data > 0)
             seq_mask[:, 0] += 1
 
@@ -325,9 +325,11 @@ class AttCriticModel(nn.Module):
 
         return att_feats, seq, att_masks, seq_mask
 
-    def core(self, seq, fc_feats, att_feats, opt, att_masks=None):
+    def forward(self, seq, fc_feats, att_feats, crop, opt, att_masks=None):
         #TODO: maybe include target sentences as input as well
-        att_feats, seq, att_masks, seq_mask = self._prepare_feature(att_feats, att_masks, seq)
+        att_feats, seq, att_masks, seq_mask = self._prepare_feature(att_feats, crop, att_masks, seq)
 
         out = self.model(att_feats, seq, att_masks, seq_mask)
-        return out
+        outputs = self.model.generator(out)
+
+        return outputs

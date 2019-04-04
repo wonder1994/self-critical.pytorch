@@ -1,4 +1,5 @@
 export PATH=$PATH:/home1/06008/xf993/java/bin/
+
 python train.py \
  --id fc \
  --caption_model fc\

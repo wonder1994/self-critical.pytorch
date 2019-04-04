@@ -84,6 +84,14 @@ def parse_opt():
                     help='steps of pretrain')
     parser.add_argument('--critic_learning_rate', type=float, default=5e-5,
                     help='learning rate for critic')
+    parser.add_argument('--critic_model', type=str, default='state_critic',
+                    help='state_critic or att_critic')
+    parser.add_argument('--critic_training_step', type=int, default=1,
+                    help='steps of training critic each ite')
+    parser.add_argument('--mle_weights', type=float, default=0,
+                    help='weights of mle during rl training')
+    parser.add_argument('--ref_cat', type=str, default='action',
+                    help='random, or action')
 
 
     #Optimization: for the Language Model

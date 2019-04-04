@@ -147,7 +147,7 @@ class FCModel(CaptionModel):
         # return the samples and their log likelihoods
         return seq.transpose(0, 1), seqLogprobs.transpose(0, 1)
 
-    def _sample(self, fc_feats, att_feats, att_masks=None, opt={}):
+    def _sample(self, fc_feats, att_feats, att_masks=None, opt={}, total_probs=False):
         sample_max = opt.get('sample_max', 1)
         beam_size = opt.get('beam_size', 1)
         temperature = opt.get('temperature', 1.0)
@@ -158,6 +158,7 @@ class FCModel(CaptionModel):
         state = self.init_hidden(batch_size)
         seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long)
         seqLogprobs = fc_feats.new_zeros(batch_size, self.seq_length)
+        seqLogprobs_total = fc_feats.new_zeros(batch_size, self.seq_length, self.vocab_size + 1)
         for t in range(self.seq_length + 2):
             if t == 0:
                 xt = self.img_embed(fc_feats)
@@ -194,7 +195,10 @@ class FCModel(CaptionModel):
                 it = it * unfinished.type_as(it)
                 seq[:,t-1] = it #seq[t] the input of t+2 time step
                 seqLogprobs[:,t-1] = sampleLogprobs.view(-1)
+                seqLogprobs_total[:,t-1,:] = logprobs
                 if unfinished.sum() == 0:
                     break
-
-        return seq, seqLogprobs
+        if total_probs:
+            return seq, seqLogprobs_total
+        else:
+            return seq, seqLogprobs

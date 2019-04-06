@@ -1,19 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="BookmarkManager">
-    <bookmark url="file://$PROJECT_DIR$/train.py" line="234" mnemonic="0" />
+    <bookmark url="file://$PROJECT_DIR$/train.py" line="246" mnemonic="0" />
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1dd16f5b-93ec-4b86-be7e-5e8a808ba8f2" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/att_critic.sh" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/arsm.sh" beforeDir="false" afterPath="$PROJECT_DIR$/arsm.sh" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/misc/rewards.py" beforeDir="false" afterPath="$PROJECT_DIR$/misc/rewards.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mle.sh" beforeDir="false" afterPath="$PROJECT_DIR$/mle.sh" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/AttCriticModel.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/AttCriticModel.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/FCModel.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/FCModel.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/opts.py" beforeDir="false" afterPath="$PROJECT_DIR$/opts.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/output_cider.py" beforeDir="false" afterPath="$PROJECT_DIR$/output_cider.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/train.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
@@ -40,39 +33,39 @@
       </usages-collector>
       <usages-collector id="statistics.file.extensions.open">
         <counts>
-          <entry key="py" value="131" />
+          <entry key="py" value="132" />
           <entry key="sh" value="36" />
         </counts>
       </usages-collector>
       <usages-collector id="statistics.file.types.open">
         <counts>
           <entry key="PLAIN_TEXT" value="36" />
-          <entry key="Python" value="131" />
+          <entry key="Python" value="132" />
         </counts>
       </usages-collector>
       <usages-collector id="statistics.file.extensions.edit">
         <counts>
-          <entry key="py" value="23028" />
+          <entry key="py" value="24652" />
           <entry key="sh" value="1113" />
         </counts>
       </usages-collector>
       <usages-collector id="statistics.file.types.edit">
         <counts>
           <entry key="PLAIN_TEXT" value="1113" />
-          <entry key="Python" value="23028" />
+          <entry key="Python" value="24652" />
         </counts>
       </usages-collector>
     </session>
   </component>
   <component name="FileEditorManager">
-    <splitter split-orientation="horizontal" split-proportion="0.76526856">
+    <splitter split-orientation="horizontal" split-proportion="0.3453136">
       <split-first>
         <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
           <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/train.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="-66">
-                  <caret line="297" column="41" lean-forward="true" selection-start-line="297" selection-start-column="41" selection-end-line="297" selection-end-column="41" />
+                <state relative-caret-position="241">
+                  <caret line="200" column="47" selection-end-line="470" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
                   </folding>
@@ -83,7 +76,7 @@
           <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/models/CriticModel.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="531">
+                <state relative-caret-position="728">
                   <caret line="64" lean-forward="true" selection-start-line="64" selection-end-line="64" />
                   <folding>
                     <element signature="e#0#12#0" expanded="true" />
@@ -105,7 +98,7 @@
           <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/misc/utils.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="69">
+                <state relative-caret-position="-162">
                   <caret line="34" column="30" lean-forward="true" selection-start-line="34" selection-start-column="30" selection-end-line="34" selection-end-column="30" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
@@ -114,11 +107,11 @@
               </provider>
             </entry>
           </file>
-          <file pinned="false" current-in-tab="false">
+          <file pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/opts.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="149">
-                  <caret line="72" column="51" selection-end-line="169" selection-end-column="15" />
+                <state relative-caret-position="364">
+                  <caret line="88" column="47" selection-start-line="88" selection-start-column="47" selection-end-line="88" selection-end-column="47" />
                 </state>
               </provider>
             </entry>
@@ -144,10 +137,11 @@
           <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/misc/rewards.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="4179">
-                  <caret line="314" column="48" lean-forward="true" selection-start-line="314" selection-start-column="48" selection-end-line="314" selection-end-column="48" />
+                <state relative-caret-position="5466">
+                  <caret line="442" column="72" lean-forward="true" selection-start-line="442" selection-start-column="30" selection-end-line="442" selection-end-column="72" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
+                    <marker date="1554509577952" expanded="true" signature="6680:9139" ph="..." />
                   </folding>
                 </state>
               </provider>
@@ -166,11 +160,11 @@
               </provider>
             </entry>
           </file>
-          <file pinned="false" current-in-tab="true">
+          <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/models/FCModel.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="542">
-                  <caret line="183" column="86" lean-forward="true" selection-start-line="183" selection-start-column="20" selection-end-line="183" selection-end-column="86" />
+                <state relative-caret-position="437">
+                  <caret line="173" column="52" selection-start-line="173" selection-start-column="52" selection-end-line="173" selection-end-column="52" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
                   </folding>
@@ -182,23 +176,11 @@
       </split-first>
       <split-second>
         <leaf>
-          <file pinned="false" current-in-tab="true">
-            <entry file="file://$PROJECT_DIR$/train.py">
-              <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="-2196">
-                  <caret line="267" column="70" selection-start-line="267" selection-start-column="67" selection-end-line="267" selection-end-column="70" />
-                  <folding>
-                    <element signature="e#0#38#0" expanded="true" />
-                  </folding>
-                </state>
-              </provider>
-            </entry>
-          </file>
           <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/coco-caption/pycocoevalcap/cider/cider_scorer.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="288">
-                  <caret line="164" column="22" lean-forward="true" selection-start-line="164" selection-start-column="22" selection-end-line="164" selection-end-column="22" />
+                <state relative-caret-position="393">
+                  <caret line="171" column="36" selection-end-line="191" selection-end-column="56" />
                 </state>
               </provider>
             </entry>
@@ -218,8 +200,8 @@
           <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/models/__init__.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="406">
-                  <caret line="32" column="32" lean-forward="true" selection-start-line="32" selection-start-column="32" selection-end-line="32" selection-end-column="32" />
+                <state relative-caret-position="153">
+                  <caret line="20" column="30" lean-forward="true" selection-start-line="20" selection-start-column="30" selection-end-line="20" selection-end-column="30" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
                   </folding>
@@ -227,13 +209,14 @@
               </provider>
             </entry>
           </file>
-          <file pinned="false" current-in-tab="false">
+          <file pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/misc/rewards.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="367">
-                  <caret line="261" column="88" lean-forward="true" selection-start-line="261" selection-start-column="88" selection-end-line="261" selection-end-column="88" />
+                <state relative-caret-position="361">
+                  <caret line="200" column="38" selection-start-line="200" selection-start-column="38" selection-end-line="200" selection-end-column="38" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
+                    <marker date="1554509577952" expanded="true" signature="6680:9139" ph="..." />
                   </folding>
                 </state>
               </provider>
@@ -272,9 +255,6 @@
   </component>
   <component name="FindInProjectRecents">
     <findStrings>
-      <find>fc</find>
-      <find>:-1</find>
-      <find>att_fea</find>
       <find>fc_</find>
       <find>batch_norm</find>
       <find>print</find>
@@ -287,8 +267,6 @@
       <find>reward</find>
       <find>gen_result_pad</find>
       <find>decoder</find>
-      <find>getattr</find>
-      <find>critic_model</find>
       <find>assert</find>
       <find>time</find>
       <find>get</find>
@@ -297,11 +275,16 @@
       <find>get_arm_loss</find>
       <find>cum_count</find>
       <find>get_self</find>
-      <find>softmax</find>
-      <find>start</find>
-      <find>vocab_size</find>
-      <find>use_att</find>
       <find>model</find>
+      <find>vocab_size</find>
+      <find>start</find>
+      <find>getattr</find>
+      <find>softmax</find>
+      <find>use_att</find>
+      <find>index_batch</find>
+      <find>seqs_arm</find>
+      <find>temperature</find>
+      <find>critic_model</find>
     </findStrings>
   </component>
   <component name="Git.Settings">
@@ -340,10 +323,10 @@
         <option value="$PROJECT_DIR$/models/AttCriticModel.py" />
         <option value="$PROJECT_DIR$/models/FCModel.py" />
         <option value="$PROJECT_DIR$/arsm.sh" />
-        <option value="$PROJECT_DIR$/train.py" />
-        <option value="$PROJECT_DIR$/misc/rewards.py" />
-        <option value="$PROJECT_DIR$/opts.py" />
         <option value="$PROJECT_DIR$/output_cider.py" />
+        <option value="$PROJECT_DIR$/train.py" />
+        <option value="$PROJECT_DIR$/opts.py" />
+        <option value="$PROJECT_DIR$/misc/rewards.py" />
       </list>
     </option>
   </component>
@@ -443,7 +426,7 @@
     <frame x="0" y="0" width="1440" height="900" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.26145172" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.0" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
       <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
@@ -670,16 +653,6 @@
     <entry file="file://$PROJECT_DIR$/misc/__init__.py">
       <provider selected="true" editor-type-id="text-editor" />
     </entry>
-    <entry file="file://$PROJECT_DIR$/models/__init__.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="406">
-          <caret line="32" column="32" lean-forward="true" selection-start-line="32" selection-start-column="32" selection-end-line="32" selection-end-column="32" />
-          <folding>
-            <element signature="e#0#38#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/mle.sh">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="60">
@@ -704,24 +677,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/models/AttCriticModel.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="251">
-          <caret line="283" column="29" selection-start-line="283" selection-start-column="22" selection-end-line="283" selection-end-column="29" />
-          <folding>
-            <element signature="e#140#178#0" expanded="true" />
-            <marker date="1554139871665" expanded="true" signature="8531:9190" ph="..." />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/att_critic.sh">
-      <provider selected="true" editor-type-id="text-editor">
-        <state>
-          <caret selection-end-line="23" selection-end-column="22" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/dataloader.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="214">
@@ -739,6 +694,31 @@
         </state>
       </provider>
     </entry>
+    <entry file="file://$PROJECT_DIR$/ars_critic.sh">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="375">
+          <caret line="25" lean-forward="true" selection-end-line="25" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/coco-caption/pycocoevalcap/cider/cider_scorer.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="393">
+          <caret line="171" column="36" selection-end-line="191" selection-end-column="56" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/models/AttCriticModel.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="251">
+          <caret line="283" column="29" selection-start-line="283" selection-start-column="22" selection-end-line="283" selection-end-column="29" />
+          <folding>
+            <element signature="e#140#178#0" expanded="true" />
+            <marker date="1554139871665" expanded="true" signature="8531:9190" ph="..." />
+          </folding>
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/rf_critic.sh">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="390">
@@ -746,38 +726,13 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/misc/utils.py">
+    <entry file="file://$PROJECT_DIR$/models/FCModel.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="69">
-          <caret line="34" column="30" lean-forward="true" selection-start-line="34" selection-start-column="30" selection-end-line="34" selection-end-column="30" />
+        <state relative-caret-position="437">
+          <caret line="173" column="52" selection-start-line="173" selection-start-column="52" selection-end-line="173" selection-end-column="52" />
           <folding>
             <element signature="e#0#38#0" expanded="true" />
           </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/models/CriticModel.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="531">
-          <caret line="64" lean-forward="true" selection-start-line="64" selection-end-line="64" />
-          <folding>
-            <element signature="e#0#12#0" expanded="true" />
-            <marker date="1553878156794" expanded="true" signature="97:102" ph="..." />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/opts.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="149">
-          <caret line="72" column="51" selection-end-line="169" selection-end-column="15" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/coco-caption/pycocoevalcap/cider/cider_scorer.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="288">
-          <caret line="164" column="22" lean-forward="true" selection-start-line="164" selection-start-column="22" selection-end-line="164" selection-end-column="22" />
         </state>
       </provider>
     </entry>
@@ -788,39 +743,68 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/misc/rewards.py">
+    <entry file="file://$PROJECT_DIR$/models/__init__.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="4179">
-          <caret line="314" column="48" lean-forward="true" selection-start-line="314" selection-start-column="48" selection-end-line="314" selection-end-column="48" />
+        <state relative-caret-position="153">
+          <caret line="20" column="30" lean-forward="true" selection-start-line="20" selection-start-column="30" selection-end-line="20" selection-end-column="30" />
           <folding>
             <element signature="e#0#38#0" expanded="true" />
           </folding>
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/ars_critic.sh">
+    <entry file="file://$PROJECT_DIR$/misc/utils.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="375">
-          <caret line="25" lean-forward="true" selection-end-line="25" />
+        <state relative-caret-position="-162">
+          <caret line="34" column="30" lean-forward="true" selection-start-line="34" selection-start-column="30" selection-end-line="34" selection-end-column="30" />
+          <folding>
+            <element signature="e#0#38#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/att_critic.sh">
+      <provider selected="true" editor-type-id="text-editor">
+        <state>
+          <caret selection-end-line="23" selection-end-column="22" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/models/CriticModel.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="728">
+          <caret line="64" lean-forward="true" selection-start-line="64" selection-end-line="64" />
+          <folding>
+            <element signature="e#0#12#0" expanded="true" />
+            <marker date="1553878156794" expanded="true" signature="97:102" ph="..." />
+          </folding>
         </state>
       </provider>
     </entry>
     <entry file="file://$PROJECT_DIR$/train.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="-66">
-          <caret line="297" column="41" lean-forward="true" selection-start-line="297" selection-start-column="41" selection-end-line="297" selection-end-column="41" />
+        <state relative-caret-position="241">
+          <caret line="200" column="47" selection-end-line="470" />
           <folding>
             <element signature="e#0#38#0" expanded="true" />
           </folding>
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/models/FCModel.py">
+    <entry file="file://$PROJECT_DIR$/opts.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="542">
-          <caret line="183" column="86" lean-forward="true" selection-start-line="183" selection-start-column="20" selection-end-line="183" selection-end-column="86" />
+        <state relative-caret-position="364">
+          <caret line="88" column="47" selection-start-line="88" selection-start-column="47" selection-end-line="88" selection-end-column="47" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/misc/rewards.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="361">
+          <caret line="200" column="38" selection-start-line="200" selection-start-column="38" selection-end-line="200" selection-end-column="38" />
           <folding>
             <element signature="e#0#38#0" expanded="true" />
+            <marker date="1554509577952" expanded="true" signature="6680:9139" ph="..." />
           </folding>
         </state>
       </provider>

@@ -18,7 +18,7 @@ import models
 from dataloader import *
 import eval_utils
 import misc.utils as utils
-from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss
+from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss
 from models.CriticModel import CriticModel
 from models.AttCriticModel import AttCriticModel
 try:
@@ -215,6 +215,18 @@ def train(opt):
             elif opt.rl_type == 'arsm':
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = np.zeros([2,2])
+            elif opt.rl_type =='mct_baseline':
+                opt.rf_demean = 0
+                gen_result, sample_logprobs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats, att_masks, data,
+                                                                         opt, loader)
+                reward = get_reward(data, gen_result, opt)
+                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - mct_baseline)
+            elif opt.rl_type == 'arsm_baseline':
+                opt.arm_as_baseline = 1
+                opt.rf_demean = 0
+                gen_result, sample_logprobs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                reward = get_reward(data, gen_result, opt)
+                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - arm_baseline)
             elif opt.rl_type == 'arsm_critic':
                 #print(opt.critic_model)
                 tic = time.time()

@@ -92,7 +92,12 @@ def parse_opt():
                     help='weights of mle during rl training')
     parser.add_argument('--ref_cat', type=str, default='action',
                     help='random, or action')
-
+    parser.add_argument('--arm_as_baseline', type=int, default=0,
+                    help='whether use pseudo rewards as baseline')
+    parser.add_argument('--temperature', type=float, default=1,
+                    help='temperature for sampling')
+    parser.add_argument('--mct_sample_num', type=int, default=1,
+                    help='number of mct baseline sample numbers')
 
     #Optimization: for the Language Model
     parser.add_argument('--optim', type=str, default='adam',

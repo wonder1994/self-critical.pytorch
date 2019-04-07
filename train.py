@@ -226,6 +226,14 @@ def train(opt):
                 opt.rf_demean = 0
                 gen_result, sample_logprobs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = get_reward(data, gen_result, opt)
+                reward_cuda = torch.from_numpy(reward).float().cuda()
+                arm_baseline[arm_baseline < 0] = reward_cuda[arm_baseline < 0]
+                loss = rl_crit(sample_logprobs, gen_result.data, reward_cuda - arm_baseline)
+            elif opt.rl_type == 'arsm_baseline_critic':
+                opt.arm_as_baseline = 1
+                opt.rf_demean = 0
+                gen_result, sample_logprobs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader, critic_model)
+                reward, std = get_reward(data, gen_result, opt, critic=True)
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - arm_baseline)
             elif opt.rl_type == 'arsm_critic':
                 #print(opt.critic_model)
@@ -297,7 +305,7 @@ def train(opt):
                 gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result],
                                            1)
                 critic_value = critic_model(gen_result_pad, fc_feats, att_feats, False, opt, att_masks).squeeze(2)
-            elif opt.critic_model == 'att_critic_vocab':
+            elif opt.critic_model == 'att_critic_vocab' and gen_result is not None:
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
                                                        mode='sample')
                 gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result],
@@ -305,8 +313,8 @@ def train(opt):
                 critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks)
                 critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)
                 critic_value = torch.cat([torch.mean(critic_value, 2)[:, 0].unsqueeze(1), critic_mask], 1)
-
-            reward, std = get_reward(data, gen_result, opt, critic=True)
+            if gen_result is None:
+                reward, std = get_reward(data, gen_result, opt, critic=True)
             reward_mean = np.mean(reward)
             reward_cuda = torch.from_numpy(reward).float().cuda()
             mask = (gen_result > 0).float()

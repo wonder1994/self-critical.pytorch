@@ -98,6 +98,8 @@ def parse_opt():
                     help='temperature for sampling')
     parser.add_argument('--mct_sample_num', type=int, default=1,
                     help='number of mct baseline sample numbers')
+    parser.add_argument('--arm_step_sample', type=str, default='sample',
+                    help='for arm, whether use greedy to sample true sentences')
 
     #Optimization: for the Language Model
     parser.add_argument('--optim', type=str, default='adam',

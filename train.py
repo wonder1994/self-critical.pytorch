@@ -18,7 +18,7 @@ import models
 from dataloader import *
 import eval_utils
 import misc.utils as utils
-from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss
+from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss
 from models.CriticModel import CriticModel
 from models.AttCriticModel import AttCriticModel
 try:
@@ -67,6 +67,7 @@ def train(opt):
     lr_history = histories.get('lr_history', {})
     ss_prob_history = histories.get('ss_prob_history', {})
     variance_history = histories.get('variance_history', {})
+    time_history = histories.get('time_history', {})
 
     loader.iterators = infos.get('iterators', loader.iterators)
     loader.split_ix = infos.get('split_ix', loader.split_ix)
@@ -204,7 +205,7 @@ def train(opt):
         if not sc_flag:
             loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:])
         else:
-            if opt.rl_type == 'self_critic':
+            if opt.rl_type == 'sc':
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
                 reward = get_self_critical_reward(dp_model, fc_feats, att_feats, att_masks, data, gen_result, opt)
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
@@ -215,25 +216,36 @@ def train(opt):
             elif opt.rl_type == 'arsm':
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = np.zeros([2,2])
+            elif opt.rl_type == 'ar':
+                loss = get_ar_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                reward = np.zeros([2,2])
             elif opt.rl_type =='mct_baseline':
                 opt.rf_demean = 0
-                gen_result, sample_logprobs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats, att_masks, data,
+                gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats, att_masks, data,
                                                                          opt, loader)
                 reward = get_reward(data, gen_result, opt)
+                reward_cuda = torch.from_numpy(reward).float().cuda()
+                mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
+                if opt.arm_step_sample == 'greedy':
+                    sample_logprobs = sample_logprobs * probs
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - mct_baseline)
             elif opt.rl_type == 'arsm_baseline':
                 opt.arm_as_baseline = 1
                 opt.rf_demean = 0
-                gen_result, sample_logprobs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                gen_result, sample_logprobs, probs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = get_reward(data, gen_result, opt)
                 reward_cuda = torch.from_numpy(reward).float().cuda()
                 arm_baseline[arm_baseline < 0] = reward_cuda[arm_baseline < 0]
+                if opt.arm_step_sample == 'greedy':
+                    sample_logprobs = sample_logprobs * probs
                 loss = rl_crit(sample_logprobs, gen_result.data, reward_cuda - arm_baseline)
             elif opt.rl_type == 'arsm_baseline_critic':
                 opt.arm_as_baseline = 1
                 opt.rf_demean = 0
-                gen_result, sample_logprobs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader, critic_model)
+                gen_result, sample_logprobs, probs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader, critic_model)
                 reward, std = get_reward(data, gen_result, opt, critic=True)
+                if opt.arm_step_sample == 'greedy':
+                    sample_logprobs = sample_logprobs * probs
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - arm_baseline)
             elif opt.rl_type == 'arsm_critic':
                 #print(opt.critic_model)
@@ -404,6 +416,7 @@ def train(opt):
             lr_history[iteration] = opt.current_lr
             ss_prob_history[iteration] = model.ss_prob
             variance_history[iteration] = variance
+            time_history[iteration] = end - start
 
 
         # make evaluation on validation set, and save model
@@ -456,7 +469,8 @@ def train(opt):
                 histories['critic_loss_history'] = critic_loss_history
                 histories['lr_history'] = lr_history
                 histories['ss_prob_history'] = ss_prob_history
-                histories['variance'] = variance_history
+                histories['variance_history'] = variance_history
+                histories['time'] = time_history
                 # histories['variance'] = 0
                 with open(os.path.join(opt.checkpoint_path, 'infos_'+opt.id+'.pkl'), 'wb') as f:
                     cPickle.dump(infos, f)

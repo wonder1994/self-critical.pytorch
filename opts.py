@@ -72,7 +72,7 @@ def parse_opt():
                     help='number of captions to sample for each image during training. Done for efficiency since CNN forward pass is expensive. E.g. coco has 5 sents/image')
     parser.add_argument('--beam_size', type=int, default=1,
                     help='used when sample_max = 1, indicates number of beams in beam search. Usually 2 or 3 works well. More is not better. Set this to 1 for faster runtime but a bit worse performance.')
-    parser.add_argument('--rl_type', type=str, default='self_critic',
+    parser.add_argument('--rl_type', type=str, default='sc',
                     help='self_critic, reinforce, ars, or arsm')
     parser.add_argument('--rf_demean', type=int, default=0,
                     help='whether demean for reinforce')

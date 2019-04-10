@@ -320,7 +320,7 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
                     f_delta = f_delta / temperature
                     f_delta = (f_delta.transpose(0, 1) * mask).transpose(0, 1)
                     mask_sum += torch.sum(mask)
-                    loss -= torch.sum(f_delta.detach() * logprobs)
+                    loss -= torch.sum(f_delta.detach() * model.logit(output))
                 elif opt.critic_model == 'att_critic_vocab' and critic is not None:
                     pseudo_action, pi_R = arsm_f_delta_fun_batch_torch(logprobs_demin, pi, data, seq, t, model, state, unfinished, loader,
                                                      opt, critic)
@@ -355,7 +355,7 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
             true_length += 1
             if unfinished.sum() == 0:
                 break
-    if opt.arm_as_baseline == 1 and opt.critic_model != 'att_critic_vocab' or critic is None:
+    if opt.arm_as_baseline == 1 and (opt.critic_model != 'att_critic_vocab' or critic is None):
         return seq, seqLogprobs, seqprobs.detach(), arm_baseline.detach()
     elif opt.arm_as_baseline == 1 and opt.critic_model == 'att_critic_vocab' and critic is not None:
         seq_pad = torch.cat([seq.new_zeros(seq.size(0), 1, dtype=torch.long), seq], 1)
@@ -363,7 +363,6 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
         for t in range(true_length):
             arm_baseline[:, t] = critic_value[:, t, :].gather(1, pseudo_action_list[:, t, :]).mean(1)
         return seq, seqLogprobs, seqprobs.detach(), arm_baseline.detach()
-
     if opt.critic_model == 'att_critic_vocab' and critic is not None:
         loss = fc_feats.new_zeros([])
         seq_pad = torch.cat([seq.new_zeros(seq.size(0), 1, dtype=torch.long), seq], 1)
@@ -378,7 +377,6 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
             f_delta = (f_delta.transpose(0, 1) * mask.float()).transpose(0, 1)
             mask_sum += torch.sum(mask.float())
             loss -= torch.sum(f_delta.detach() * logprobs_list[t])
-
     loss = loss / mask_sum
     return loss
 
@@ -389,7 +387,6 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     state = model.init_hidden(batch_size)
     seq = fc_feats.new_zeros(batch_size, model.seq_length, dtype=torch.long)
     arm_baseline = fc_feats.new_zeros(batch_size, model.seq_length)
-    loss = fc_feats.new_zeros([])
     unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8)
     temperature = getattr(opt, 'temperature', 1.0)
     pseudo_action_list = fc_feats.new_ones(batch_size, model.seq_length, vocab_size, dtype=torch.long)
@@ -410,6 +407,7 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
         output, state = model.core(xt, state)
         #print(opt.seq_per_img)
         if t >= 1:
+            logprobs1 = model.logit(output)
             logprobs = F.log_softmax(model.logit(output), dim=1)
             probs = F.softmax(model.logit(output), dim=1)
             pi = torch.from_numpy(np.random.dirichlet(np.ones(vocab_size), batch_size)).float().cuda()
@@ -423,7 +421,7 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
             sampleprobs = probs.gather(1, it)
             it = it.view(-1).long()
             pi_list.append(pi)
-            logprobs_list.append(logprobs)
+            logprobs_list.append(logprobs1)
             if t == 1:
                 unfinished = it > 0
             else:
@@ -464,10 +462,93 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     return loss
 
 
+def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic=None):
+    batch_size = fc_feats.size(0)
+    vocab_size = opt.vocab_size + 1
+    state = model.init_hidden(batch_size)
+    seq = fc_feats.new_zeros(batch_size, model.seq_length, dtype=torch.long)
+    arm_baseline = fc_feats.new_zeros(batch_size, model.seq_length)
+    unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8)
+    temperature = getattr(opt, 'temperature', 1.0)
+    pseudo_action_list = fc_feats.new_ones(batch_size, model.seq_length, vocab_size, dtype=torch.long)
+    seqLogprobs = fc_feats.new_zeros(batch_size, model.seq_length)
+    seqprobs = fc_feats.new_zeros(batch_size, model.seq_length)
+    mask_sum = 0
+    true_length = 0
+    pi_list = []
+    logprobs_list = []
+    probs_list = []
+    for t in range(model.seq_length + 1):
+        if t == 0:
+            xt = model.img_embed(fc_feats)
+        else:
+            if t == 1:
+                it = fc_feats.data.new(batch_size).long().zero_()
+            xt = model.embed(it)
+
+        output, state = model.core(xt, state)
+        #print(opt.seq_per_img)
+        if t >= 1:
+            logprobs1 = model.logit(output)
+            logprobs = F.log_softmax(model.logit(output), dim=1)
+            probs = F.softmax(model.logit(output), dim=1)
+            pi = torch.from_numpy(np.random.dirichlet(np.ones(vocab_size), batch_size)).float().cuda()
+            logprobs_demin = logprobs.data - torch.min(logprobs.data, 1)[0].unsqueeze(1).repeat(1, vocab_size)
+            mask = unfinished.float()
+            if temperature == 1.0:
+                it = torch.min(torch.log(pi) - logprobs_demin, 1)[1].unsqueeze(1)
+            else:
+                it = torch.min(torch.log(pi) - logprobs_demin / temperature, 1)[1].unsqueeze(1)
+            sampleLogprobs = logprobs.gather(1, it)
+            sampleprobs = probs.gather(1, it)
+            it = it.view(-1).long()
+            pi_list.append(pi)
+            logprobs_list.append(logprobs1)
+            probs_list.append(probs)
+            if t == 1:
+                unfinished = it > 0
+            else:
+                unfinished = unfinished * (it > 0)
+
+            it = it * unfinished.type_as(it)
+            seq[:, t-1] = it
+            seqLogprobs[:, t - 1] = sampleLogprobs.view(-1)
+            seqprobs[:, t - 1] = sampleprobs.view(-1)
+            true_length += 1
+            if unfinished.sum() == 0:
+                break
+    loss = fc_feats.new_zeros([])
+
+    ## evaluate reward
+    seq_per_img = batch_size // len(data['gts'])
+    gts = OrderedDict()
+    for i in range(len(data['gts'])):
+        gts[i] = [array_to_str(data['gts'][i][j]) for j in range(len(data['gts'][i]))]
+    seqs = seq.data.cpu().numpy()
+
+    # print('seq arm', seqs_arm[0:arm_pseudo_counts[0]])
+    res_ = []
+    gts_arm = {}
+    for i in range(batch_size):
+        res_.append({'image_id': i, 'caption': [array_to_str(seqs[i])]})
+        gts_arm[i] = gts[i // seq_per_img]
+    _, arm_metric_value = CiderD_scorer.compute_score(gts_arm, res_)
+    mask = fc_feats.new_ones(batch_size, dtype=torch.uint8)
+    for t in range(true_length):
+        f_delta = torch.from_numpy(np.repeat(np.expand_dims(arm_metric_value, 1), vocab_size, 1)).float().cuda() * (1.0 - probs_list[t])
+        if t > 0:
+            mask *= seq[:, t-1] > 0
+        f_delta = (f_delta.transpose(0, 1) * mask.float()).transpose(0, 1)
+        mask_sum += torch.sum(mask.float())
+        loss -= torch.sum(f_delta.detach() * logprobs_list[t])
+    loss = loss / mask_sum
+    return loss
+
+
 def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, unfinished, loader, opt, critic=None, type='ars', print_pseudo=True):
     #TODO: write in torch
     batch_size, vocab_size = logits.size()
-    index_batch = torch.arange(batch_size).cuda()
+    index_batch = torch.arange(batch_size).cuda().long()
     arm_metric_matrix = np.ones([batch_size, vocab_size]) * -1
     index_vocab = torch.arange(vocab_size).cuda()
     temperature = getattr(opt, 'temperature', 1.0)

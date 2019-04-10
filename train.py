@@ -215,6 +215,7 @@ def train(opt):
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
             elif opt.rl_type == 'arsm':
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                #print(loss)
                 reward = np.zeros([2,2])
             elif opt.rl_type == 'ar':
                 loss = get_ar_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)

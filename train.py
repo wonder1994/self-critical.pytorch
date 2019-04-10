@@ -18,7 +18,7 @@ import models
 from dataloader import *
 import eval_utils
 import misc.utils as utils
-from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss
+from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss, get_rf_loss
 from models.CriticModel import CriticModel
 from models.AttCriticModel import AttCriticModel
 try:
@@ -217,6 +217,10 @@ def train(opt):
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 #print(loss)
                 reward = np.zeros([2,2])
+            elif opt.rl_type == 'rf4':
+                loss = get_rf_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                # print(loss)
+                reward = np.zeros([2, 2])
             elif opt.rl_type == 'ar':
                 loss = get_ar_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = np.zeros([2,2])

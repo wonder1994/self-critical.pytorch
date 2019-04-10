@@ -389,9 +389,6 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     arm_baseline = fc_feats.new_zeros(batch_size, model.seq_length)
     unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8)
     temperature = getattr(opt, 'temperature', 1.0)
-    pseudo_action_list = fc_feats.new_ones(batch_size, model.seq_length, vocab_size, dtype=torch.long)
-    seqLogprobs = fc_feats.new_zeros(batch_size, model.seq_length)
-    seqprobs = fc_feats.new_zeros(batch_size, model.seq_length)
     mask_sum = 0
     true_length = 0
     pi_list = []
@@ -411,14 +408,11 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
             logprobs = F.log_softmax(model.logit(output), dim=1)
             probs = F.softmax(model.logit(output), dim=1)
             pi = torch.from_numpy(np.random.dirichlet(np.ones(vocab_size), batch_size)).float().cuda()
-            logprobs_demin = logprobs.data - torch.min(logprobs.data, 1)[0].unsqueeze(1).repeat(1, vocab_size)
             mask = unfinished.float()
             if temperature == 1.0:
-                it = torch.min(torch.log(pi) - logprobs_demin, 1)[1].unsqueeze(1)
+                it = torch.min(torch.log(pi) - logprobs1, 1)[1].unsqueeze(1)
             else:
-                it = torch.min(torch.log(pi) - logprobs_demin / temperature, 1)[1].unsqueeze(1)
-            sampleLogprobs = logprobs.gather(1, it)
-            sampleprobs = probs.gather(1, it)
+                it = torch.min(torch.log(pi) - logprobs1 / temperature, 1)[1].unsqueeze(1)
             it = it.view(-1).long()
             pi_list.append(pi)
             logprobs_list.append(logprobs1)
@@ -429,8 +423,6 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
 
             it = it * unfinished.type_as(it)
             seq[:, t-1] = it
-            seqLogprobs[:, t - 1] = sampleLogprobs.view(-1)
-            seqprobs[:, t - 1] = sampleprobs.view(-1)
             true_length += 1
             if unfinished.sum() == 0:
                 break
@@ -535,7 +527,8 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     _, arm_metric_value = CiderD_scorer.compute_score(gts_arm, res_)
     mask = fc_feats.new_ones(batch_size, dtype=torch.uint8)
     for t in range(true_length):
-        f_delta = torch.from_numpy(np.repeat(np.expand_dims(arm_metric_value, 1), vocab_size, 1)).float().cuda() * (1.0 - probs_list[t])
+        indicator = torch.arange(vocab_size).unsqueeze(0).repeat(batch_size, 1).cuda().long() == (seq[:,t]).unsqueeze(1).repeat(1, vocab_size)
+        f_delta = torch.from_numpy(np.repeat(np.expand_dims(arm_metric_value, 1), vocab_size, 1)).float().cuda() * (indicator.float() - probs_list[t])
         if t > 0:
             mask *= seq[:, t-1] > 0
         f_delta = (f_delta.transpose(0, 1) * mask.float()).transpose(0, 1)

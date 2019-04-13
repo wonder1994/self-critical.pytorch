@@ -100,17 +100,25 @@ def parse_opt():
                     help='number of mct baseline sample numbers')
     parser.add_argument('--arm_step_sample', type=str, default='sample',
                     help='for arm, whether use greedy to sample true sentences')
+    parser.add_argument('--importance_sampling', type=int, default=0,
+                        help='whether use importance sampling')
+    parser.add_argument('--critic_var_penalty', type=float, default=0,
+                    help='variance penalty for critic model')
+    parser.add_argument('--is_weight', type=float, default=0.3,
+                    help='weight for importance sampling')
+    parser.add_argument('--bl_weight', type=float, default=0.3,
+                        help='bellman loss weight')
 
     #Optimization: for the Language Model
     parser.add_argument('--optim', type=str, default='adam',
                     help='what update to use? rmsprop|sgd|sgdmom|adagrad|adam')
     parser.add_argument('--learning_rate', type=float, default=4e-4,
                     help='learning rate')
-    parser.add_argument('--learning_rate_decay_start', type=int, default=-1, 
+    parser.add_argument('--learning_rate_decay_start', type=int, default=-1,
                     help='at what iteration to start decaying learning rate? (-1 = dont) (in epoch)')
-    parser.add_argument('--learning_rate_decay_every', type=int, default=3, 
+    parser.add_argument('--learning_rate_decay_every', type=int, default=3,
                     help='every how many iterations thereafter to drop LR?(in epoch)')
-    parser.add_argument('--learning_rate_decay_rate', type=float, default=0.8, 
+    parser.add_argument('--learning_rate_decay_rate', type=float, default=0.8,
                     help='every how many iterations thereafter to drop LR?(in epoch)')
     parser.add_argument('--optim_alpha', type=float, default=0.9,
                     help='alpha for adam')
@@ -121,13 +129,13 @@ def parse_opt():
     parser.add_argument('--weight_decay', type=float, default=0,
                     help='weight_decay')
 
-    parser.add_argument('--scheduled_sampling_start', type=int, default=-1, 
+    parser.add_argument('--scheduled_sampling_start', type=int, default=-1,
                     help='at what iteration to start decay gt probability')
-    parser.add_argument('--scheduled_sampling_increase_every', type=int, default=5, 
+    parser.add_argument('--scheduled_sampling_increase_every', type=int, default=5,
                     help='every how many iterations thereafter to gt probability')
-    parser.add_argument('--scheduled_sampling_increase_prob', type=float, default=0.05, 
+    parser.add_argument('--scheduled_sampling_increase_prob', type=float, default=0.05,
                     help='How much to update the prob')
-    parser.add_argument('--scheduled_sampling_max_prob', type=float, default=0.25, 
+    parser.add_argument('--scheduled_sampling_max_prob', type=float, default=0.25,
                     help='Maximum scheduled sampling prob.')
 
 
@@ -141,9 +149,9 @@ def parse_opt():
     parser.add_argument('--language_eval', type=int, default=0,
                     help='Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
     parser.add_argument('--losses_log_every', type=int, default=25,
-                    help='How often do we snapshot losses, for inclusion in the progress dump? (0 = disable)')       
+                    help='How often do we snapshot losses, for inclusion in the progress dump? (0 = disable)')
     parser.add_argument('--load_best_score', type=int, default=1,
-                    help='Do we load previous best score when resuming training.')       
+                    help='Do we load previous best score when resuming training.')
 
     # misc
     parser.add_argument('--id', type=str, default='',

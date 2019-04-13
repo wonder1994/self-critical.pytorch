@@ -8,7 +8,6 @@ import misc.utils as utils
 from collections import OrderedDict
 import torch
 import torch.nn.functional as F
-from torch.distributions import Dirichlet
 import misc.utils as utils
 
 import sys
@@ -21,8 +20,7 @@ from pycocoevalcap.bleu.bleu import Bleu
 
 CiderD_scorer = None
 Bleu_scorer = None
-#CiderD_scorer = CiderD(df='corpus')
-
+epsilon = 1e-18
 def init_scorer(cached_tokens):
     global CiderD_scorer
     CiderD_scorer = CiderD_scorer or CiderD(df=cached_tokens)
@@ -104,8 +102,6 @@ def get_reward(data, gen_result, opt, critic=False):
     #print(gts[0])
     if opt.cider_reward_weight > 0:
         _, cider_scores = CiderD_scorer.compute_score(gts, res_)
-        # print('Cider scores:', _)
-        # print('Cider scores std:', np.std(cider_scores))
     else:
         cider_scores = 0
     if opt.bleu_reward_weight > 0:
@@ -155,10 +151,8 @@ def get_mct_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
             else:
                 if temperature == 1.0:
                     it = torch.multinomial(torch.exp(logprobs.data).cpu(), 1).cuda()
-                    # it = torch.from_numpy(np.argmin(np.exp(-logprobs_numpy) * pi, axis=1)).cuda()
                 else:
                     it = torch.multinomial(torch.exp(torch.div(logprobs.data, temperature)).cpu(), 1).cuda()
-                    # it = torch.from_numpy(np.argmin(np.exp(-logprobs_numpy / temperature) * pi, axis=1)).cuda()
             sampleLogprobs = logprobs.gather(1, it)
             sampleprobs = probs.gather(1, it)
             it = it.view(-1).long()
@@ -238,9 +232,6 @@ def complete_batch_fun(logits, data, pre_seq, step, model, state, unfinished, lo
     for i in range(len(data['gts'])):
         gts[i] = [array_to_str(data['gts'][i][j]) for j in range(len(data['gts'][i]))]
     seqs_arm = seqs_arm.data.cpu().numpy()
-
-    # print('seq arm', seqs_arm[0:arm_pseudo_counts[0]])
-
     if step == np.random.randint(20) and np.random.randint(20) == 1:
         sents = utils.decode_sequence(loader.get_vocab(), torch.from_numpy(seqs_arm[0:arm_pseudo_counts[0]]).cuda())
         print('imageid', data['infos'][0]['id'], '**********************At step ' + str(step))
@@ -256,7 +247,6 @@ def complete_batch_fun(logits, data, pre_seq, step, model, state, unfinished, lo
         res_.append({'image_id': i, 'caption': [array_to_str(seqs_arm[i])]})
         i_index = arm_index_2[i]
         gts_arm[i] = gts[i_index // seq_per_img]
-    # print('time for prepare reward:' + str(time() - tic))
     tic = time()
     _, arm_metric_value = CiderD_scorer.compute_score(gts_arm, res_)
     arm_index = np.array(arm_index)
@@ -264,8 +254,6 @@ def complete_batch_fun(logits, data, pre_seq, step, model, state, unfinished, lo
                            mct_sample_num, 1)
     arm_index = np.reshape(arm_index, [-1])
     arm_pseudo_index = np.array(arm_pseudo_index)
-    # print('time for evaluating pseudo action: ' + str(time() - tic))
-    # print(arm_metric_value)
     arm_metric_matrix[arm_pseudo_index > 1, :] = np.reshape(arm_metric_value[arm_index], [-1, mct_sample_num])
     return np.mean(arm_metric_matrix, 1)
 
@@ -334,11 +322,9 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
                 if temperature == 1.0:
                     it = torch.multinomial(torch.exp(logprobs.data).cpu(), 1).cuda()
                     # it = torch.min(torch.log(pi) - logprobs_demin, 1)[1].unsqueeze(1)
-                    # it = torch.from_numpy(np.argmin(np.exp(-logprobs_numpy) * pi, axis=1)).cuda()
                 else:
                     it = torch.multinomial(torch.exp(torch.div(logprobs.data, temperature)).cpu(), 1).cuda()
                     # it = torch.min(torch.log(pi) - logprobs_demin / temperature, 1)[1].unsqueeze(1)
-                    # it = torch.from_numpy(np.argmin(np.exp(-logprobs_numpy / temperature) * pi, axis=1)).cuda()
             sampleLogprobs = logprobs.gather(1, it)
             sampleprobs = probs.gather(1, it)
             it = it.view(-1).long()
@@ -386,7 +372,6 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     vocab_size = opt.vocab_size + 1
     state = model.init_hidden(batch_size)
     seq = fc_feats.new_zeros(batch_size, model.seq_length, dtype=torch.long)
-    arm_baseline = fc_feats.new_zeros(batch_size, model.seq_length)
     unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8)
     temperature = getattr(opt, 'temperature', 1.0)
     mask_sum = 0
@@ -402,7 +387,6 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
             xt = model.embed(it)
 
         output, state = model.core(xt, state)
-        #print(opt.seq_per_img)
         if t >= 1:
             logprobs1 = model.logit(output)
             logprobs = F.log_softmax(model.logit(output), dim=1)
@@ -434,8 +418,6 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     for i in range(len(data['gts'])):
         gts[i] = [array_to_str(data['gts'][i][j]) for j in range(len(data['gts'][i]))]
     seqs = seq.data.cpu().numpy()
-
-    # print('seq arm', seqs_arm[0:arm_pseudo_counts[0]])
     res_ = []
     gts_arm = {}
     for i in range(batch_size):
@@ -459,10 +441,8 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     vocab_size = opt.vocab_size + 1
     state = model.init_hidden(batch_size)
     seq = fc_feats.new_zeros(batch_size, model.seq_length, dtype=torch.long)
-    arm_baseline = fc_feats.new_zeros(batch_size, model.seq_length)
     unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8)
     temperature = getattr(opt, 'temperature', 1.0)
-    pseudo_action_list = fc_feats.new_ones(batch_size, model.seq_length, vocab_size, dtype=torch.long)
     seqLogprobs = fc_feats.new_zeros(batch_size, model.seq_length)
     seqprobs = fc_feats.new_zeros(batch_size, model.seq_length)
     mask_sum = 0
@@ -470,6 +450,7 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     pi_list = []
     logprobs_list = []
     probs_list = []
+    q_list = []
     for t in range(model.seq_length + 1):
         if t == 0:
             xt = model.img_embed(fc_feats)
@@ -479,18 +460,36 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
             xt = model.embed(it)
 
         output, state = model.core(xt, state)
-        #print(opt.seq_per_img)
         if t >= 1:
             logprobs1 = model.logit(output)
             logprobs = F.log_softmax(model.logit(output), dim=1)
             probs = F.softmax(model.logit(output), dim=1)
             pi = torch.from_numpy(np.random.dirichlet(np.ones(vocab_size), batch_size)).float().cuda()
-            logprobs_demin = logprobs.data - torch.min(logprobs.data, 1)[0].unsqueeze(1).repeat(1, vocab_size)
             mask = unfinished.float()
-            if temperature == 1.0:
-                it = torch.min(torch.log(pi) - logprobs_demin, 1)[1].unsqueeze(1)
+            if opt.importance_sampling == 1:
+                if critic == None:
+                    f = fc_feats.new_ones(batch_size, vocab_size)
+                else:
+                    if t == 1:
+                        seq_pad = seq.new_zeros(seq.size(0), 1, dtype=torch.long)
+                    else:
+                        seq_pad = torch.cat([seq.new_zeros(seq.size(0), 1, dtype=torch.long), seq[:, :t-1]], 1)
+                    critic_value = critic(seq_pad, fc_feats, att_feats, False, opt, att_masks).detach()
+                    f = critic_value[:, t-1, :]
+                if opt.pretrain_critic == 1:
+                    q = test_critic_sampling(probs, f, opt).detach()
+                else:
+                    q = importance_sampling(probs, f, opt).detach()
+                q_list.append(q)
+                logprobs_sample = torch.log(q)
             else:
-                it = torch.min(torch.log(pi) - logprobs_demin / temperature, 1)[1].unsqueeze(1)
+                logprobs_sample = logprobs
+            if temperature == 1.0:
+                it = torch.min(torch.log(pi) - logprobs_sample, 1)[1].unsqueeze(1)
+            else:
+                it = torch.min(torch.log(pi) - logprobs_sample / temperature, 1)[1].unsqueeze(1)
+            if opt.pretrain_critic == 1:
+                it = torch.min(- logprobs_sample, 1)[1].unsqueeze(1)
             sampleLogprobs = logprobs.gather(1, it)
             sampleprobs = probs.gather(1, it)
             it = it.view(-1).long()
@@ -509,16 +508,15 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
             true_length += 1
             if unfinished.sum() == 0:
                 break
+    sents = utils.decode_sequence(loader.get_vocab(), seq[0:5])
+    print('imageid', data['infos'][0]['id'])
+    print(sents)
     loss = fc_feats.new_zeros([])
-
-    ## evaluate reward
     seq_per_img = batch_size // len(data['gts'])
     gts = OrderedDict()
     for i in range(len(data['gts'])):
         gts[i] = [array_to_str(data['gts'][i][j]) for j in range(len(data['gts'][i]))]
     seqs = seq.data.cpu().numpy()
-
-    # print('seq arm', seqs_arm[0:arm_pseudo_counts[0]])
     res_ = []
     gts_arm = {}
     for i in range(batch_size):
@@ -528,14 +526,17 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     mask = fc_feats.new_ones(batch_size, dtype=torch.uint8)
     for t in range(true_length):
         indicator = torch.arange(vocab_size).unsqueeze(0).repeat(batch_size, 1).cuda().long() == (seq[:,t]).unsqueeze(1).repeat(1, vocab_size)
-        f_delta = torch.from_numpy(np.repeat(np.expand_dims(arm_metric_value, 1), vocab_size, 1)).float().cuda() * (indicator.float() - probs_list[t])
+        f_delta = torch.from_numpy(np.repeat(np.expand_dims(arm_metric_value, 1), vocab_size, 1)).float().cuda() * (
+                    indicator.float() - probs_list[t])
+        if opt.importance_sampling == 1:
+            f_delta = f_delta * (torch.div(probs_list[t].gather(1, seq[:, t].unsqueeze(1)), epsilon + q_list[t].gather(1, seq[:, t].unsqueeze(1))).detach().repeat(1, vocab_size))
         if t > 0:
             mask *= seq[:, t-1] > 0
         f_delta = (f_delta.transpose(0, 1) * mask.float()).transpose(0, 1)
         mask_sum += torch.sum(mask.float())
         loss -= torch.sum(f_delta.detach() * logprobs_list[t])
     loss = loss / mask_sum
-    return loss
+    return loss, seq, arm_metric_value
 
 
 def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, unfinished, loader, opt, critic=None, type='ars', print_pseudo=True):
@@ -586,6 +587,8 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
             return torch.from_numpy(np.ones([batch_size]) * -1).float().cuda()
         else:
             return torch.from_numpy(np.zeros([batch_size, vocab_size])).float().cuda()
+    if opt.rl_type == 'ars_indicator':
+        return torch.from_numpy((np.array(arm_pseudo_index) != 1).astype(int)).float().cuda()
     seqs_arm = pre_seq[arm_index_2, :]
     unfinished_arm = unfinished[arm_index_2]
     it = torch.from_numpy(arm_pseudo_action_set).long().cuda()
@@ -613,8 +616,6 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
             it = it.view(-1).long()
             unfinished_arm = (it > 0) * unfinished_arm
             seqs_arm[:, t-1] = it * unfinished_arm.type_as(it)
-        #print('time for completion: ' + str(time() - tic))
-
         ## evaluate reward
         tic = time()
         seq_per_img = batch_size // len(data['gts'])
@@ -622,8 +623,6 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
         for i in range(len(data['gts'])):
             gts[i] = [array_to_str(data['gts'][i][j]) for j in range(len(data['gts'][i]))]
         seqs_arm = seqs_arm.data.cpu().numpy()
-
-        #print('seq arm', seqs_arm[0:arm_pseudo_counts[0]])
 
         if print_pseudo and step == np.random.randint(20) and np.random.randint(20) == 1:
             sents = utils.decode_sequence(loader.get_vocab(), torch.from_numpy(seqs_arm[0:arm_pseudo_counts[0]]).cuda())
@@ -640,8 +639,6 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
             res_.append({'image_id': i, 'caption': [array_to_str(seqs_arm[i])]})
             i_index = arm_index_2[i]
             gts_arm[i] = gts[i_index // seq_per_img]
-        #print('time for prepare reward:' + str(time() - tic))
-        tic = time()
         _, arm_metric_value = CiderD_scorer.compute_score(gts_arm, res_)
     else:
         if opt.critic_model == 'state_critic':
@@ -665,7 +662,6 @@ def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
     index_vocab = torch.arange(vocab_size).cuda().long()
     if temperature == 1.0:
         exp_neg_logit = torch.exp(-logits)
-        # it = torch.from_numpy(np.argmin(np.exp(-logprobs_numpy) * pi, axis=1)).cuda()
     else:
         exp_neg_logit = torch.exp(-logits/temperature)
     min_value = torch.min(pi * exp_neg_logit, 1)[0].unsqueeze(1).repeat(1, vocab_size)
@@ -691,3 +687,15 @@ def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
 
     pseudo_actions = pseudo_actions + index_matrix * (pseudo_actions_true - pseudo_actions)
     return pseudo_actions
+
+def importance_sampling(prob, f, opt):
+    unnormalized_q = prob * torch.abs(f) + opt.is_weight * (prob.pow(2).sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + 1 - prob * 2).pow(0.5) * prob * torch.abs(f)
+    #unnormalized_q = torch.abs(f)
+    q = torch.div(unnormalized_q, (unnormalized_q.sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + epsilon))
+    return q
+
+def test_critic_sampling(prob, f, opt):
+    # unnormalized_q = prob * torch.abs(f) + opt.is_weight * (prob.pow(2).sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + 1 - prob * 2).pow(0.5) * prob * torch.abs(f)
+    unnormalized_q = torch.abs(f)
+    q = torch.div(unnormalized_q, (unnormalized_q.sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + epsilon))
+    return q

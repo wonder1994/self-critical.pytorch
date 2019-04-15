@@ -16,7 +16,7 @@ import numpy as np
 
 from .CaptionModel import CaptionModel
 from .AttModel import sort_pack_padded_sequence, pad_unsort_packed_sequence, pack_wrapper
-
+from misc.rewards import get_reward
 
 class EncoderDecoder(nn.Module):
     """
@@ -333,3 +333,119 @@ class AttCriticModel(nn.Module):
         outputs = self.model.generator(out)
 
         return outputs
+
+
+def critic_loss_fun(fc_feats, att_feats, att_masks, dp_model, critic_model, opt, data):
+    gen_result, sample_logprobs_total = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                 total_probs=True, mode='sample')
+    gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+    critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt,
+                                att_masks)  # batch, length, vocab
+    critic_value_keep = critic_value
+    critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)  # batch, length
+    critic_value = torch.cat(
+        [torch.sum(critic_value * F.softmax(sample_logprobs_total, 2).detach(), 2)[:, 0].unsqueeze(1),
+         critic_mask], 1)
+
+    bellman_loss = bellman_loss_fun(critic_mask, critic_value_keep.detach(),
+                                    F.softmax(sample_logprobs_total, 2))
+    # TODO: target.
+    reward, std = get_reward(data, gen_result, opt, critic=True)
+    reward_cuda = torch.from_numpy(reward).float().cuda()
+    mask = (gen_result > 0).float()
+    mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+    crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
+                 torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
+    crit_loss += opt.bl_weight * bellman_loss
+    if opt.critic_var_penalty != 0:
+        crit_loss += opt.critic_var_penalty * (
+                critic_value_keep -
+                critic_value_keep.mean(2).unsqueeze(2).repeat(1, 1, critic_value_keep.size()[2])).pow(2).mean()
+    return crit_loss, reward, std
+
+
+def target_critic_loss_fun(fc_feats, att_feats, att_masks, dp_model, critic_model, opt, data, target_critic,
+                           target_actor, gen_result=None, sample_logprobs_total=None, reward=None):
+    if gen_result is None:
+        gen_result, sample_logprobs_total = target_actor(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                     total_probs=True, mode='sample')
+    gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+    critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt,
+                                att_masks)  # batch, length, vocab
+    critic_value_keep = critic_value
+    target_critic_value = target_critic(gen_result_pad, fc_feats, att_feats, True, opt, att_masks)
+    critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)  # batch, length
+    critic_value = torch.cat(
+        [torch.sum(critic_value * F.softmax(sample_logprobs_total, 2).detach(), 2)[:, 0].unsqueeze(1),
+         critic_mask], 1)
+
+    bellman_loss = bellman_loss_fun(critic_mask, target_critic_value.detach(),
+                                    F.softmax(sample_logprobs_total, 2))
+    if reward is None:
+        reward, std = get_reward(data, gen_result, opt, critic=True)
+    else:
+        std = np.std(reward)
+
+    reward_cuda = torch.from_numpy(reward).float().cuda()
+    mask = (gen_result > 0).float()
+    mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+    #TODO: Bellman loss + mask
+    crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
+                 torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
+
+    crit_loss += opt.bl_weight * bellman_loss
+
+    if opt.critic_var_penalty != 0:
+        crit_loss += opt.critic_var_penalty * (
+                critic_value_keep -
+                critic_value_keep.mean(2).unsqueeze(2).repeat(1, 1, critic_value_keep.size()[2])).pow(2).mean()
+    return crit_loss, reward, std
+
+
+def target_critic_loss_fun_mask(fc_feats, att_feats, att_masks, dp_model, critic_model, opt, data, target_critic,
+                           target_actor, gen_result=None, sample_logprobs_total=None, reward=None):
+    if gen_result is None:
+        gen_result, sample_logprobs_total = target_actor(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
+                                                     total_probs=True, mode='sample')
+    gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+    critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt,
+                                att_masks)  # batch, length, vocab
+    critic_value_keep = critic_value
+    target_critic_value = target_critic(gen_result_pad, fc_feats, att_feats, True, opt, att_masks).detach()
+    critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)  # batch, length
+    critic_value = torch.cat(
+        [torch.sum(critic_value * F.softmax(sample_logprobs_total, 2).detach(), 2)[:, 0].unsqueeze(1),
+         critic_mask], 1)
+    mask = (gen_result > 0).float()
+    mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+    bellman_loss = bellman_loss_fun(critic_mask, target_critic_value.detach(),
+                                    F.softmax(sample_logprobs_total, 2), gen_result)
+    if reward is None:
+        reward, std = get_reward(data, gen_result, opt, critic=True)
+    else:
+        std = np.std(reward)
+    reward_cuda = torch.from_numpy(reward).float().cuda()
+
+    #max_index = max_nonzero_index(gen_result)
+    #last_word_index = torch.min(torch.cat([max_index.unsqueeze(1) + 1, torch.ones_like(max_index).unsqueeze(1).cuda() * (gen_result.size()[1]-1)], 1), 1)[0]
+    #crit_loss = (critic_mask.gather(1, last_word_index.long().unsqueeze(1)) - reward_cuda[:, 0]).pow(2).sum() / float(mask.size()[0])
+    crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
+                 torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
+    crit_loss += opt.bl_weight * bellman_loss
+    if opt.critic_var_penalty != 0:
+        vocab_mask = mask.unsqueeze(2).repeat(1, 1, critic_value_keep.size()[2])
+        crit_loss += opt.critic_var_penalty * (
+            (critic_value_keep -
+                critic_value_keep.mean(2).unsqueeze(2).repeat(1, 1, critic_value_keep.size()[2])) * vocab_mask).pow(2).sum() / vocab_mask.sum()
+    return crit_loss, reward, std
+
+
+def bellman_loss_fun(critic_mask, critic_value_keep, probs, gen_result):
+    mask = (gen_result > 0).float()
+    return ((critic_mask[:, :-1] - (critic_value_keep * probs.detach()).sum(2)[:, 1:]) * mask[:, :-1]).pow(2).sum() / mask[:, :-1].sum()
+
+def max_nonzero_index(sentences):
+    mask = (sentences != 0).float()
+    rows, cols = mask.size()
+    max_index = torch.max(mask * torch.arange(cols).float().cuda(), dim=1)[0]
+    return max_index

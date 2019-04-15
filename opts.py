@@ -108,6 +108,10 @@ def parse_opt():
                     help='weight for importance sampling')
     parser.add_argument('--bl_weight', type=float, default=0.3,
                         help='bellman loss weight')
+    parser.add_argument('--gamma_critic', type=float, default=0.001,
+                        help='weight to update target critic')
+    parser.add_argument('--gamma_actor', type=float, default=0.001,
+                        help='weight to update target actor')
 
     #Optimization: for the Language Model
     parser.add_argument('--optim', type=str, default='adam',

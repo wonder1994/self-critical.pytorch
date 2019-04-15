@@ -315,7 +315,7 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
                     pseudo_action_list[:, t - 1, :] = pseudo_action
                     pi_list.append(pi_R)
                     logprobs = logprobs / temperature
-                    logprobs_list.append(logprobs)
+                    logprobs_list.append(model.logit(output))
             if opt.arm_step_sample == 'greedy':
                 it = torch.max(logprobs.data, 1)[1].unsqueeze(1)
             else:
@@ -436,7 +436,7 @@ def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     return loss
 
 
-def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic=None):
+def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic=None, test_critic=False):
     batch_size = fc_feats.size(0)
     vocab_size = opt.vocab_size + 1
     state = model.init_hidden(batch_size)
@@ -444,6 +444,7 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
     unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8)
     temperature = getattr(opt, 'temperature', 1.0)
     seqLogprobs = fc_feats.new_zeros(batch_size, model.seq_length)
+    seqLogprobs_total = fc_feats.new_zeros(batch_size, model.seq_length, vocab_size)
     seqprobs = fc_feats.new_zeros(batch_size, model.seq_length)
     mask_sum = 0
     true_length = 0
@@ -476,7 +477,7 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
                         seq_pad = torch.cat([seq.new_zeros(seq.size(0), 1, dtype=torch.long), seq[:, :t-1]], 1)
                     critic_value = critic(seq_pad, fc_feats, att_feats, False, opt, att_masks).detach()
                     f = critic_value[:, t-1, :]
-                if opt.pretrain_critic == 1:
+                if test_critic:
                     q = test_critic_sampling(probs, f, opt).detach()
                 else:
                     q = importance_sampling(probs, f, opt).detach()
@@ -488,10 +489,11 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
                 it = torch.min(torch.log(pi) - logprobs_sample, 1)[1].unsqueeze(1)
             else:
                 it = torch.min(torch.log(pi) - logprobs_sample / temperature, 1)[1].unsqueeze(1)
-            if opt.pretrain_critic == 1:
+            if test_critic:
                 it = torch.min(- logprobs_sample, 1)[1].unsqueeze(1)
             sampleLogprobs = logprobs.gather(1, it)
             sampleprobs = probs.gather(1, it)
+            seqLogprobs_total[:, t - 1, :] = logprobs
             it = it.view(-1).long()
             pi_list.append(pi)
             logprobs_list.append(logprobs1)
@@ -509,8 +511,9 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
             if unfinished.sum() == 0:
                 break
     sents = utils.decode_sequence(loader.get_vocab(), seq[0:5])
-    print('imageid', data['infos'][0]['id'])
-    print(sents)
+    if test_critic:
+        print('imageid', data['infos'][0]['id'])
+        print(sents)
     loss = fc_feats.new_zeros([])
     seq_per_img = batch_size // len(data['gts'])
     gts = OrderedDict()
@@ -536,7 +539,7 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
         mask_sum += torch.sum(mask.float())
         loss -= torch.sum(f_delta.detach() * logprobs_list[t])
     loss = loss / mask_sum
-    return loss, seq, arm_metric_value
+    return loss, seq, arm_metric_value, seqLogprobs_total
 
 
 def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, unfinished, loader, opt, critic=None, type='ars', print_pseudo=True):
@@ -689,7 +692,7 @@ def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
     return pseudo_actions
 
 def importance_sampling(prob, f, opt):
-    unnormalized_q = prob * torch.abs(f) + opt.is_weight * (prob.pow(2).sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + 1 - prob * 2).pow(0.5) * prob * torch.abs(f)
+    unnormalized_q = prob + opt.is_weight * (prob.pow(2).sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + 1 - prob * 2).pow(0.5) * prob * torch.abs(f)
     #unnormalized_q = torch.abs(f)
     q = torch.div(unnormalized_q, (unnormalized_q.sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + epsilon))
     return q

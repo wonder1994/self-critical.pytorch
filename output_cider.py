@@ -24,4 +24,4 @@ for i in range(200):
         break
     else:
         cider_rf_nodemean[337000 + i *1000] = data_rf_nodemean['val_result_history'][337000 + i *1000]['lang_stats']
-print(data_rf_nodemean['val_result_history'][338000]['lang_stats'])
+print(data_rf_nodemean['variance_history'])

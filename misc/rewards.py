@@ -551,7 +551,6 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
     index_vocab = torch.arange(vocab_size).cuda()
     temperature = getattr(opt, 'temperature', 1.0)
     A_cat = torch.min(torch.log(pi) - logits, 1)[1].long()
-    # A_cat = torch.min(pi * exp_neg_logit, 1)[1].long()
     if opt.ref_cat == 'random':
         R_cat = torch.randint(vocab_size, (batch_size,)).cuda().long()
     elif opt.ref_cat == 'action':
@@ -657,28 +656,25 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
     return torch.from_numpy(f_delta).float().cuda()
 
 def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
+    #TODO: log pi.
     batch_size, vocab_size = logits.size()
     index_batch = torch.arange(batch_size).cuda().long()
     index_vocab = torch.arange(vocab_size).cuda().long()
-    if temperature == 1.0:
-        exp_neg_logit = torch.exp(-logits)
-    else:
-        exp_neg_logit = torch.exp(-logits/temperature)
-    min_value = torch.min(pi * exp_neg_logit, 1)[0].unsqueeze(1).repeat(1, vocab_size)
+    min_value = torch.min(torch.log(pi) - logits, 1)[0].unsqueeze(1).repeat(1, vocab_size)
     pseudo_actions = A_cat.unsqueeze(1).repeat(1, vocab_size)
-    pseudo_actions += (exp_neg_logit * pi[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size) < min_value).long() * \
+    pseudo_actions += ((-logits + torch.log(pi[index_batch, R_cat]).unsqueeze(1).repeat(1, vocab_size)) < min_value).long() * \
                       (index_vocab - A_cat.unsqueeze(1))
-    pseudo_actions += (pi * exp_neg_logit[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size) < min_value).long() * \
+    pseudo_actions += ((torch.log(pi) - logits[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size)) < min_value).long() * \
                       (R_cat - A_cat).unsqueeze(1).repeat(1, vocab_size)
     index_matrix = torch.zeros_like(logits).long()
     index_matrix[index_batch, A_cat] = 1
     index_matrix[R_cat == A_cat, :] = 1
 
-    topk, indices = torch.topk(-pi * exp_neg_logit, 2, dim=1)
+    topk, indices = torch.topk(-(torch.log(pi) - logits), 2, dim=1)
     top_2_indices = indices[:, 1]
     top_2_values = -topk[:, 1].unsqueeze(1).repeat(1, vocab_size)
-    candidate_i_value = exp_neg_logit * pi[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size)
-    candidate_A_value = pi * exp_neg_logit[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size)
+    candidate_i_value = -logits + torch.log(pi[index_batch, R_cat]).unsqueeze(1).repeat(1, vocab_size)
+    candidate_A_value = torch.log(pi) - logits[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size)
     pseudo_actions_true = top_2_indices.unsqueeze(1).repeat(1, vocab_size)
     pseudo_actions_true += (candidate_i_value < top_2_values).long() * (candidate_i_value <= candidate_A_value).long() * \
                            (index_vocab - top_2_indices.unsqueeze(1))

@@ -303,7 +303,7 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
                     pseudo_action_list[:, t - 1, :] = pseudo_action
                     pi_list.append(pi_R)
             else:
-                if opt.critic_model != 'att_critic_vocab' or critic == None :
+                if opt.critic_model != 'att_critic_vocab' or critic == None:
                     f_delta = arsm_f_delta_fun_batch_torch(logits.data, pi, data, seq, t, model, state, unfinished, loader,
                                                      opt, critic)
                     f_delta = f_delta / temperature
@@ -550,12 +550,8 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
     arm_metric_matrix = np.ones([batch_size, vocab_size]) * -1
     index_vocab = torch.arange(vocab_size).cuda()
     temperature = getattr(opt, 'temperature', 1.0)
-    if temperature == 1.0:
-        exp_neg_logit = torch.exp(-logits)
-        # it = torch.from_numpy(np.argmin(np.exp(-logprobs_numpy) * pi, axis=1)).cuda()
-    else:
-        exp_neg_logit = torch.exp(-logits/temperature)
-    A_cat = torch.min(pi * exp_neg_logit, 1)[1].long()
+    A_cat = torch.min(torch.log(pi) - logits, 1)[1].long()
+    # A_cat = torch.min(pi * exp_neg_logit, 1)[1].long()
     if opt.ref_cat == 'random':
         R_cat = torch.randint(vocab_size, (batch_size,)).cuda().long()
     elif opt.ref_cat == 'action':

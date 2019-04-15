@@ -286,31 +286,32 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
         output, state = model.core(xt, state)
         #print(opt.seq_per_img)
         if t >= 1:
-            logprobs = F.log_softmax(model.logit(output), dim=1)
+            logits = model.logit(output)
+            logprobs = F.log_softmax(logits, dim=1)
             probs = F.softmax(model.logit(output), dim=1)
             pi = torch.from_numpy(np.random.dirichlet(np.ones(vocab_size), batch_size)).float().cuda()
-            logprobs_demin = logprobs.data - torch.min(logprobs.data, 1)[0].unsqueeze(1).repeat(1, vocab_size)
             mask = unfinished.float()
             if opt.arm_as_baseline == 1:
                 if opt.critic_model != 'att_critic_vocab' or critic == None:
-                    arm_baseline[:, t-1] = arsm_f_delta_fun_batch_torch(logprobs_demin, pi, data, seq, t, model, state, unfinished, loader,
+                    # TODO: log space.
+                    arm_baseline[:, t-1] = arsm_f_delta_fun_batch_torch(logits.data, pi, data, seq, t, model, state, unfinished, loader,
                                                      opt, critic)
                 elif opt.critic_model == 'att_critic_vocab' and critic is not None:
-                    pseudo_action, pi_R = arsm_f_delta_fun_batch_torch(logprobs_demin, pi, data, seq, t, model, state,
+                    pseudo_action, pi_R = arsm_f_delta_fun_batch_torch(logits.data, pi, data, seq, t, model, state,
                                                                        unfinished, loader,
                                                                        opt, critic)
                     pseudo_action_list[:, t - 1, :] = pseudo_action
                     pi_list.append(pi_R)
             else:
                 if opt.critic_model != 'att_critic_vocab' or critic == None :
-                    f_delta = arsm_f_delta_fun_batch_torch(logprobs_demin, pi, data, seq, t, model, state, unfinished, loader,
+                    f_delta = arsm_f_delta_fun_batch_torch(logits.data, pi, data, seq, t, model, state, unfinished, loader,
                                                      opt, critic)
                     f_delta = f_delta / temperature
                     f_delta = (f_delta.transpose(0, 1) * mask).transpose(0, 1)
                     mask_sum += torch.sum(mask)
                     loss -= torch.sum(f_delta.detach() * model.logit(output))
                 elif opt.critic_model == 'att_critic_vocab' and critic is not None:
-                    pseudo_action, pi_R = arsm_f_delta_fun_batch_torch(logprobs_demin, pi, data, seq, t, model, state, unfinished, loader,
+                    pseudo_action, pi_R = arsm_f_delta_fun_batch_torch(logits.data, pi, data, seq, t, model, state, unfinished, loader,
                                                      opt, critic)
                     pseudo_action_list[:, t - 1, :] = pseudo_action
                     pi_list.append(pi_R)

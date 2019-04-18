@@ -32,15 +32,17 @@ class EncoderDecoder(nn.Module):
         self.tgt_embed = tgt_embed
         self.generator = generator
 
-    def forward(self, src, tgt, src_mask, tgt_mask):
+    def forward(self, src, tgt, src_mask, tgt_mask, xt):
         "Take in and process masked src and target sequences."
         return self.decode(self.encode(src, src_mask), src_mask,
-                           tgt, tgt_mask)
+                           tgt, tgt_mask, xt)
 
     def encode(self, src, src_mask):
         return self.encoder(self.src_embed(src), src_mask)
 
-    def decode(self, memory, src_mask, tgt, tgt_mask):
+    def decode(self, memory, src_mask, tgt, tgt_mask, xt):
+        tgt_embedding = self.tgt_embed(tgt)
+        tgt_embedding[:, 0, :] = xt
         return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
 
 
@@ -325,11 +327,11 @@ class AttCriticModel(nn.Module):
 
         return att_feats, seq, att_masks, seq_mask
 
-    def forward(self, seq, fc_feats, att_feats, crop, opt, att_masks=None):
+    def forward(self, seq, xt, att_feats, crop, opt, att_masks=None):
         #TODO: maybe include target sentences as input as well
         att_feats, seq, att_masks, seq_mask = self._prepare_feature(att_feats, crop, att_masks, seq)
 
-        out = self.model(att_feats, seq, att_masks, seq_mask)
+        out = self.model(att_feats, seq, att_masks, seq_mask, xt)
         outputs = self.model.generator(out)
 
         return outputs
@@ -404,14 +406,16 @@ def target_critic_loss_fun(fc_feats, att_feats, att_masks, dp_model, critic_mode
 
 def target_critic_loss_fun_mask(fc_feats, att_feats, att_masks, dp_model, critic_model, opt, data, target_critic,
                            target_actor, gen_result=None, sample_logprobs_total=None, reward=None):
+    att_feats = torch.zeros_like(att_feats)
     if gen_result is None:
         gen_result, sample_logprobs_total = target_actor(fc_feats, att_feats, att_masks, opt={'sample_max': 0},
                                                      total_probs=True, mode='sample')
     gen_result_pad = torch.cat([gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
-    critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt,
+    xt = target_actor.img_embed(fc_feats)
+    critic_value = critic_model(gen_result_pad, xt, att_feats, True, opt,
                                 att_masks)  # batch, length, vocab
     critic_value_keep = critic_value
-    target_critic_value = target_critic(gen_result_pad, fc_feats, att_feats, True, opt, att_masks).detach()
+    target_critic_value = target_critic(gen_result_pad, xt, att_feats, True, opt, att_masks).detach()
     critic_mask = critic_value.gather(2, gen_result.unsqueeze(2)).squeeze(2)  # batch, length
     critic_value = torch.cat(
         [torch.sum(critic_value * F.softmax(sample_logprobs_total, 2).detach(), 2)[:, 0].unsqueeze(1),
@@ -425,12 +429,13 @@ def target_critic_loss_fun_mask(fc_feats, att_feats, att_masks, dp_model, critic
     else:
         std = np.std(reward)
     reward_cuda = torch.from_numpy(reward).float().cuda()
-
-    #max_index = max_nonzero_index(gen_result)
-    #last_word_index = torch.min(torch.cat([max_index.unsqueeze(1) + 1, torch.ones_like(max_index).unsqueeze(1).cuda() * (gen_result.size()[1]-1)], 1), 1)[0]
-    #crit_loss = (critic_mask.gather(1, last_word_index.long().unsqueeze(1)) - reward_cuda[:, 0]).pow(2).sum() / float(mask.size()[0])
-    crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
-                 torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
+    #print('critic', torch.max(critic_value_keep[:, 10, :], 1)[0])
+    #print('reward', torch.max(reward_cuda, 1)[0])
+    max_index = max_nonzero_index(gen_result)
+    last_word_index = torch.min(torch.cat([max_index.unsqueeze(1) + 1, torch.ones_like(max_index).unsqueeze(1).cuda() * (gen_result.size()[1]-1)], 1), 1)[0]
+    crit_loss = (critic_mask.gather(1, last_word_index.long().unsqueeze(1)) - reward_cuda[:, 0]).pow(2).sum() / float(mask.size()[0])
+    # crit_loss = (torch.sum((critic_value[:, 1:] - reward_cuda).pow(2) * mask) +
+    #              torch.sum((critic_value[:, 0] - reward_cuda[:, 0]).pow(2))) / (torch.sum(mask) + mask.size(0))
     crit_loss += opt.bl_weight * bellman_loss
     if opt.critic_var_penalty != 0:
         vocab_mask = mask.unsqueeze(2).repeat(1, 1, critic_value_keep.size()[2])

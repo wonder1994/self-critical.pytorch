@@ -112,6 +112,8 @@ def parse_opt():
                         help='weight to update target critic')
     parser.add_argument('--gamma_actor', type=float, default=0.001,
                         help='weight to update target actor')
+    parser.add_argument('--ref_num', type=int, default=1,
+                        help='reference number for ars')
 
     #Optimization: for the Language Model
     parser.add_argument('--optim', type=str, default='adam',

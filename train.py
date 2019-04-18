@@ -81,11 +81,11 @@ def train(opt):
 
     ####################### Critic pretrain #####################################################################
     ##### Critic with state as input
-    if opt.critic_model == 'state_critic':
-        critic_model = CriticModel(opt)
-    else:
-        critic_model = AttCriticModel(opt)
-        target_critic = AttCriticModel(opt)
+    # if opt.critic_model == 'state_critic':
+    #     critic_model = CriticModel(opt)
+    # else:
+    critic_model = AttCriticModel(opt)
+    target_critic = AttCriticModel(opt)
     if vars(opt).get('start_from_critic', None) is not None and True:
         # check if all necessary files exist
         assert os.path.isdir(opt.start_from_critic), " %s must be a a path" % opt.start_from_critic
@@ -341,13 +341,16 @@ def train(opt):
                 print("iter {} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
                     .format(iteration, epoch, train_loss, end - start))
                 print(opt.checkpoint_path)
-            else:
+            elif 'critic' in opt.rl_type:
                 print(
                     "iter {} , crit_train_loss = {:.3f}, difference = {:.3f}, difference_sum = {:.3f},variance = {:g}, time/batch = {:.3f}" \
                     .format(iteration, crit_train_loss ** 0.5, crit_train_loss ** 0.5 - std, error_sum, variance, end - start))
                 print(opt.checkpoint_path)
                 critic_model.eval()
                 _, _, _, _ = get_rf_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader, critic_model, test_critic=True)
+            else:
+                print("iter {} (epoch {}), avg_reward = {:.3f}, variance = {:g}, time/batch = {:.3f}" \
+                      .format(iteration, epoch, np.mean(reward[:, 0]), variance, end - start))
 
         # Update the iteration and epoch
         iteration += 1

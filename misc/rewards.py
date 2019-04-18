@@ -476,7 +476,7 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
                         seq_pad = seq.new_zeros(seq.size(0), 1, dtype=torch.long)
                     else:
                         seq_pad = torch.cat([seq.new_zeros(seq.size(0), 1, dtype=torch.long), seq[:, :t-1]], 1)
-                    critic_value = critic(seq_pad, fc_feats, att_feats, False, opt, att_masks).detach()
+                    critic_value = critic(seq_pad, xt, att_feats, False, opt, att_masks).detach()
                     f = critic_value[:, t-1, :]
                 if test_critic:
                     q = test_critic_sampling(probs, f, opt).detach()
@@ -511,9 +511,12 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
             true_length += 1
             if unfinished.sum() == 0:
                 break
-    sents = utils.decode_sequence(loader.get_vocab(), seq[0:5])
+
     if test_critic:
-        print('imageid', data['infos'][0]['id'])
+        print('imageid', data['infos'][0]['id'],data['infos'][1]['id'],data['infos'][2]['id'],data['infos'][3]['id'])
+        sents = utils.decode_sequence(loader.get_vocab(), seq[0:1,:])
+        print(sents)
+        sents = utils.decode_sequence(loader.get_vocab(), seq[20:21,:])
         print(sents)
     loss = fc_feats.new_zeros([])
     seq_per_img = batch_size // len(data['gts'])
@@ -546,18 +549,28 @@ def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic
 def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, unfinished, loader, opt, critic=None, type='ars', print_pseudo=True):
     #TODO: write in torch
     batch_size, vocab_size = logits.size()
+    ref_num = opt.ref_num
     index_batch = torch.arange(batch_size).cuda().long()
-    arm_metric_matrix = np.ones([batch_size, vocab_size]) * -1
+    arm_metric_matrix = np.ones([batch_size, vocab_size*ref_num]) * -1
     index_vocab = torch.arange(vocab_size).cuda()
     temperature = getattr(opt, 'temperature', 1.0)
     A_cat = torch.min(torch.log(pi) - logits, 1)[1].long()
+    topk, indices = torch.topk(logits, ref_num, dim=1)
+    random_ref = torch.topk(torch.rand((batch_size, vocab_size)), ref_num)[1]
+    f_delta = np.zeros([batch_size, vocab_size])
     if opt.ref_cat == 'random':
-        R_cat = torch.randint(vocab_size, (batch_size,)).cuda().long()
-    elif opt.ref_cat == 'action':
-        R_cat = A_cat
-    pseudo_actions = pseudo_action_fun(logits,  A_cat, R_cat, pi, temperature)
+        R_cat_set = random_ref.cuda().long()
+    elif opt.ref_cat == 'topaction':
+        R_cat_set = indices.cuda().long()
+    for i in range(ref_num):
+        R_cat = R_cat_set[:, i]
+        pseudo_actions_tmp = pseudo_action_fun(logits, A_cat, R_cat, pi)
+        if i == 0:
+            pseudo_actions = pseudo_actions_tmp
+        else:
+            pseudo_actions = torch.cat([pseudo_actions, pseudo_actions_tmp], 1)
     if unfinished.sum(0) != batch_size:
-        pseudo_actions[(1 - unfinished), :] = A_cat[(1 - unfinished)].unsqueeze(1).repeat(1, vocab_size)
+        pseudo_actions[(1 - unfinished), :] = A_cat[(1 - unfinished)].unsqueeze(1).repeat(1, vocab_size*ref_num)
     #print('time for pseudo action: ' + str(time() - tic))
     if opt.critic_model == 'att_critic_vocab':
         return pseudo_actions, pi[index_batch, R_cat]
@@ -633,7 +646,6 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
             print('Pseudo action mean: ', np.mean(arm_pseudo_index), 'std: ', np.std(arm_pseudo_index), 'max: ', np.max(arm_pseudo_index))
         res_ = []
         gts_arm = {}
-        cum_count = np.cumsum(arm_pseudo_counts)
         for i in range(len(arm_pseudo_action_set)):
             res_.append({'image_id': i, 'caption': [array_to_str(seqs_arm[i])]})
             i_index = arm_index_2[i]
@@ -645,15 +657,19 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
             output, state_arm = model.core(xt, state_arm)
             arm_metric_value = critic.core(state_arm).detach().cpu().numpy()
     arm_index = np.array(arm_index)
-    arm_index += np.repeat(np.expand_dims(np.concatenate([[0], np.cumsum(arm_pseudo_counts)[0:-1]]), 1), vocab_size, 1)
+    arm_index += np.repeat(np.expand_dims(np.concatenate([[0], np.cumsum(arm_pseudo_counts)[0:-1]]), 1), vocab_size*ref_num, 1)
     arm_index = np.reshape(arm_index, [-1])
     arm_pseudo_index = np.array(arm_pseudo_index)
-    arm_metric_matrix[arm_pseudo_index > 1, :] = np.reshape(arm_metric_value[arm_index], [-1, vocab_size])
+    arm_metric_matrix[arm_pseudo_index > 1, :] = np.reshape(arm_metric_value[arm_index], [-1, vocab_size * ref_num])
     if opt.arm_as_baseline == 1:
         return torch.from_numpy(arm_metric_matrix).float().cuda().mean(1)
-    f_delta = arm_metric_matrix - np.repeat(np.expand_dims(np.mean(arm_metric_matrix, 1), 1), vocab_size, 1)
-    f_delta = f_delta * np.repeat(np.expand_dims(1.0 - vocab_size * pi[index_batch, R_cat].cpu().numpy(), 1), vocab_size, 1)
-    return torch.from_numpy(f_delta).float().cuda()
+    for i in range(ref_num):
+        R_cat = R_cat_set[:, i]
+        arm_metric_matrix_tmp = arm_metric_matrix[:, (vocab_size*i):(vocab_size*(i+1))]
+        f_delta_tmp = arm_metric_matrix_tmp - np.repeat(np.expand_dims(np.mean(arm_metric_matrix_tmp, 1), 1), vocab_size, 1)
+        f_delta_tmp = f_delta_tmp * np.repeat(np.expand_dims(1.0 - vocab_size * pi[index_batch, R_cat].cpu().numpy(), 1), vocab_size, 1)
+        f_delta += f_delta_tmp
+    return torch.from_numpy(f_delta/ref_num).float().cuda()
 
 def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
     #TODO: log pi.
@@ -686,7 +702,6 @@ def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
 
 def importance_sampling(prob, f, opt):
     unnormalized_q = prob + opt.is_weight * (prob.pow(2).sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + 1 - prob * 2).pow(0.5) * prob * torch.abs(f)
-    #unnormalized_q = torch.abs(f)
     q = torch.div(unnormalized_q, (unnormalized_q.sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + epsilon))
     return q
 

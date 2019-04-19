@@ -79,6 +79,23 @@ def train(opt):
 
     target_actor = models.setup(opt).cuda()
 
+    ######################### Binary tree coding #####################################################################
+    with open(os.path.join(opt.binary_tree_coding_dir, 'binary_tree_coding.pkl')) as f:
+        binary_tree_coding = cPickle.load(f)
+        opt.depth = binary_tree_coding['depth']
+        opt.vocab2code
+        binary_tree_coding = {'depth': 30, 'vocab2code': vocab2code, 'phi_list': phi_list, 'stop_list': stop_list,
+                              'code2vocab': code2vocab}
+
+
+
+
+
+
+
+
+
+
 
     ######################### Actor-critic Training #####################################################################
 

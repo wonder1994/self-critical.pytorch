@@ -11,6 +11,7 @@ import torch
 
 from .ShowTellModel import ShowTellModel
 from .FCModel import FCModel
+from .FCModel_binary import FCModel_binary
 from .OldModel import ShowAttendTellModel, AllImgModel
 # from .Att2inModel import Att2inModel
 from .AttModel import *
@@ -18,6 +19,8 @@ from .AttModel import *
 def setup(opt):
     if opt.caption_model == 'fc':
         model = FCModel(opt)
+    elif opt.caption_model == 'fc_binary':
+        model = FCModel_binary(opt)
     elif opt.caption_model == 'show_tell':
         model = ShowTellModel(opt)
     # Att2in model in self-critical

@@ -18,7 +18,8 @@ import models
 from dataloader import *
 import eval_utils_binary
 import misc.utils as utils
-from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss, get_rf_loss
+from misc.rewards import get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss, get_rf_loss
+from models.FCModel_binary import init_scorer
 from models.CriticModel import CriticModel
 from models.AttCriticModel import AttCriticModel, critic_loss_fun, target_critic_loss_fun, target_critic_loss_fun_mask
 try:
@@ -149,6 +150,10 @@ def train(opt):
                 loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 #print(loss)
                 reward = np.zeros([2,2])
+            elif opt.rl_type == 'arm':
+                loss = dp_model.get_arm_loss_binary(fc_feats, att_feats, att_masks, opt, data, loader)
+                #print(loss)
+                reward = np.zeros([2,2])
             elif opt.rl_type == 'rf4':
                 loss,_,_,_ = get_rf_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 # print(loss)
@@ -199,8 +204,8 @@ def train(opt):
         gradient = torch.zeros([0]).cuda()
         for i in model.parameters():
             gradient = torch.cat((gradient, i.grad.view(-1)), 0)
-        first_order = 0.9999 * first_order + 0.0001 * gradient
-        second_order = 0.9999 * second_order + 0.0001 * gradient.pow(2)
+        first_order = 0.999 * first_order + 0.001 * gradient
+        second_order = 0.999 * second_order + 0.001 * gradient.pow(2)
         # print(torch.max(torch.abs(gradient)))
         variance = torch.mean(torch.abs(second_order - first_order.pow(2))).item()
         if opt.rl_type != 'arsm' or not sc_flag:

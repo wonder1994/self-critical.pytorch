@@ -21,3 +21,7 @@ python train_binary.py \
  --language_eval 1 \
  --losses_log_every 1000\
  --binary_tree_coding_dir /home/ziyu/self-critical.pytorch\
+ --self_critical_after 0\
+ --cached_tokens $DISK_PATH/IC/data/coco-train-idxs \
+ --losses_log_every 10\
+ --rl_type arm \

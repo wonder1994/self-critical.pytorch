@@ -25,3 +25,9 @@ for i in range(200):
     else:
         cider_rf_nodemean[337000 + i *1000] = data_rf_nodemean['val_result_history'][337000 + i *1000]['lang_stats']
 print(data_rf_nodemean['variance_history'])
+
+
+
+for i in range(200):
+    print(i*10000 + 10000)
+    print(data_rf_nodemean['val_result_history'][i*10000 + 10000]['lang_stats'])

@@ -13,6 +13,33 @@ import numpy as np
 
 from .CaptionModel import CaptionModel
 
+from collections import OrderedDict
+
+import sys
+sys.path.append("/home1/06008/xf993/self-critical.pytorch/cider")
+sys.path.append("/home/ziyu/self-critical.pytorch/cider")
+from pyciderevalcap.ciderD.ciderD import CiderD
+sys.path.append("/home1/06008/xf993/self-critical.pytorch/coco-caption")
+sys.path.append("/home/ziyu/self-critical.pytorch/coco-caption")
+from pycocoevalcap.bleu.bleu import Bleu
+
+CiderD_scorer = None
+Bleu_scorer = None
+epsilon = 1e-18
+def init_scorer(cached_tokens):
+    global CiderD_scorer
+    CiderD_scorer = CiderD_scorer or CiderD(df=cached_tokens)
+    global Bleu_scorer
+    Bleu_scorer = Bleu_scorer or Bleu(4)
+
+def array_to_str(arr):
+    out = ''
+    for i in range(len(arr)):
+        out += str(arr[i]) + ' '
+        if arr[i] == 0:
+            break
+    return out.strip()
+
 class LSTMCore(nn.Module):
     def __init__(self, opt):
         super(LSTMCore, self).__init__()
@@ -192,9 +219,9 @@ class FCModel_binary(CaptionModel):
                     it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))  # int8
                     binary_code[:, t - 1, i] = it_depth.squeeze(1) * mask_depth
                     output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - torch.log(1.0 + phi_exp_depth)).squeeze(1)
+                    code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
                     if len(self.stop_list[i]) != 0:
                         mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
-                    code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
                 it = torch.from_numpy(code2vocab_fun(code_sum, self.code2vocab)).cuda().long()
                 if t == 1:
                     unfinished = it > 0
@@ -205,6 +232,168 @@ class FCModel_binary(CaptionModel):
                 if unfinished.sum() == 0:
                     break
         return seq, output_logit
+    def get_arm_loss_binary(self, fc_feats, att_feats, att_masks, opt, data, loader):
+        sample_max = 0
+        batch_size = fc_feats.size(0)
+        state = self.init_hidden(batch_size)
+        seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long).cuda()
+        output_logit = fc_feats.new_zeros(batch_size, self.seq_length, self.depth).cuda()
+        unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8).cuda()
+        binary_code = fc_feats.new_ones(batch_size, self.seq_length, self.depth, dtype=torch.uint8).cuda()
+        loss = torch.zeros([]).float().cuda()
+        mask_sum = 0
+        for t in range(self.seq_length + 2):
+            if t == 0:
+                xt = self.img_embed(fc_feats)
+            else:
+                if t == 1: # input <bos>
+                    it = fc_feats.data.new(batch_size).long().zero_()
+                xt = self.embed(it)
+
+            output, state = self.core(xt, state)
+            phi = self.logit(output) # phi: batch, vocab-1
+            phi_exp = torch.exp(phi)
+            # sample the next_word
+            if t == self.seq_length + 1: # skip if we achieve maximum length
+                break
+            if t >= 1:
+                mask_depth = unfinished.clone() # batch,
+                code_sum = np.zeros(batch_size)
+                for i in range(self.depth):
+                    if i == 0: #two level mask ugly!
+                        phi_index = torch.zeros(batch_size, 1).long().cuda()
+                    if i > 0:
+                        if mask_depth.sum() == 0:
+                            break
+                        phi_index = torch.from_numpy(map_phi(self.phi_list[i],
+                                            np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
+                    phi_exp_depth = phi_exp.gather(1, phi_index)  # batch, 1
+                    phi_depth = phi.gather(1, phi_index)
+                    f_delta = self.arm_binary_step(phi_depth, phi, data, seq, t, i, state, unfinished, mask_depth, loader,
+                                                   opt, binary_code, code_sum)
+                    loss -= (torch.from_numpy(f_delta).cuda().float() * phi_depth.squeeze(1) * mask_depth.float()).sum()
+                    mask_sum += mask_depth.sum()
+                    if sample_max:
+                        pi = 0.5
+                    else:
+                        pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
+                    it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))  # int8
+                    binary_code[:, t - 1, i] = it_depth.squeeze(1) * mask_depth
+                    output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - torch.log(1.0 + phi_exp_depth)).squeeze(1)
+                    code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
+                    if len(self.stop_list[i]) != 0:
+                        mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
+                it = torch.from_numpy(code2vocab_fun(code_sum, self.code2vocab)).cuda().long()
+                if t == 1:
+                    unfinished = it > 0
+                else:
+                    unfinished = unfinished * (it > 0)
+                it = it * unfinished.type_as(it)
+                seq[:, t-1] = it
+                if unfinished.sum() == 0:
+                    break
+        return loss / mask_sum
+
+
+    def arm_binary_step(self, phi_depth, phi, data, pre_seq, step, depth, state, unfinished, mask_depth, loader, opt, binary_code, code_sum):
+        #TODO: pay attention to where copy is needed.
+        # pseudo actions:
+        sample_max = 0
+        batch_size = phi_depth.size(0)
+        pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
+        it_1 = (pi > 1.0 / (1.0 + torch.exp(phi_depth)))
+        it_0 = (pi < 1.0 / (1.0 + torch.exp(-phi_depth)))
+        pseudo_actions = torch.cat([it_1, it_0], 1) #batch, 2
+        f_delta = np.zeros(batch_size)
+        if mask_depth.sum() != batch_size:
+            pseudo_actions[(1 - mask_depth), :] = 0
+        need_run_index = (pseudo_actions[:, 1] != pseudo_actions[:, 0]) # batch
+        if need_run_index.sum() == 0:
+            return f_delta
+        completion_size = need_run_index.sum().cpu().numpy() * 2
+        # connect seq, state, binary_code, unfinished, mask_depth, target/data
+        seqs_arm = torch.cat([pre_seq[need_run_index, :], pre_seq[need_run_index, :]], 0) #batch, length
+        phi_arm = torch.cat([phi[need_run_index, :], phi[need_run_index, :]], 0) #batch,
+        unfinished_arm = torch.cat([unfinished[need_run_index], unfinished[need_run_index]], 0) #batch,
+        state_h, state_c = state
+        state_h_arm = torch.cat([state_h[:, need_run_index, :], state_h[:, need_run_index, :]], 1)
+        state_c_arm = torch.cat([state_c[:, need_run_index, :], state_c[:, need_run_index, :]], 1)
+        state_arm = (state_h_arm, state_c_arm)
+        binary_code_arm = torch.cat([binary_code[need_run_index, :, :], binary_code[need_run_index, :, :]], 0)
+        code_sum_arm = np.concatenate([code_sum[need_run_index.cpu().numpy().astype(bool)], code_sum[need_run_index.cpu().numpy().astype(bool)]], 0)
+        mask_depth_arm = torch.cat([mask_depth[need_run_index], mask_depth[need_run_index]], 0)
+        it_depth_arm = torch.cat([it_1[need_run_index, :], it_0[need_run_index, :]], 0)
+        binary_code_arm[:, step - 1, depth] = it_depth_arm.squeeze(1) * mask_depth_arm
+        code_sum_arm += (it_depth_arm.squeeze(1) * mask_depth_arm).cpu().numpy() * np.power(2, depth)
+        if len(self.stop_list[depth]) != 0:
+            mask_depth_arm *= torch.from_numpy(unfinished_fun(code_sum_arm, self.stop_list[depth])).cuda().type_as(mask_depth_arm)
+        for i in range(depth + 1, self.depth):
+            phi_index_arm = torch.from_numpy(map_phi(self.phi_list[i],
+                                                     np.expand_dims(code_sum_arm * unfinished_arm.cpu().numpy(), 1))).long().cuda()
+            phi_depth_arm = phi_arm.gather(1, phi_index_arm)
+            phi_exp_depth_arm = torch.exp(phi_depth_arm)
+            if sample_max:
+                pi_arm = 0.5
+            else:
+                pi_arm = torch.from_numpy(np.random.uniform(size=[completion_size, 1])).float().cuda()
+            it_depth_arm = (pi_arm > 1.0 / (1.0 + phi_exp_depth_arm))
+            binary_code_arm[:, step - 1, i] = it_depth_arm.squeeze(1) * mask_depth_arm
+            code_sum_arm += (it_depth_arm.squeeze(1) * mask_depth_arm).cpu().numpy() * np.power(2, i)
+            if len(self.stop_list[i]) != 0:
+                mask_depth_arm *= torch.from_numpy(unfinished_fun(code_sum_arm, self.stop_list[i])).cuda().type_as(mask_depth_arm)
+        it_arm = torch.from_numpy(code2vocab_fun(code_sum_arm, self.code2vocab)).cuda().long()
+        unfinished_arm = unfinished_arm * (it_arm > 0)
+        it_arm = it_arm * unfinished_arm.type_as(it_arm)
+        seqs_arm[:, step-1] = it_arm
+        for t in range(step + 1, self.seq_length + 1):
+            if unfinished_arm.sum() == 0:
+                break
+            xt = self.embed(it_arm)
+            output_arm, state_arm = self.core(xt, state_arm)
+            phi_arm = self.logit(output_arm)
+            phi_exp_arm = torch.exp(phi_arm)
+            mask_depth_arm = unfinished_arm.clone()
+            code_sum_arm = np.zeros(completion_size)
+            for i in range(self.depth):
+                if i == 0:
+                    phi_index_arm = torch.zeros(completion_size, 1).long().cuda()
+                if i > 0:
+                    if mask_depth_arm.sum() == 0:
+                        break
+                    phi_index_arm = torch.from_numpy(map_phi(
+                        self.phi_list[i], np.expand_dims(code_sum_arm * unfinished_arm.cpu().numpy(), 1))).long().cuda()
+                phi_exp_depth_arm = phi_exp_arm.gather(1, phi_index_arm)
+                if sample_max:
+                    pi_arm = 0.5
+                else:
+                    pi_arm = torch.from_numpy(np.random.uniform(size=[completion_size, 1])).float().cuda()
+                it_depth_arm = (pi_arm > 1.0 / (1.0 + phi_exp_depth_arm))
+                binary_code_arm[:, t - 1, i] = it_depth_arm.squeeze(1) * mask_depth_arm
+                code_sum_arm += (it_depth_arm.squeeze(1) * mask_depth_arm).cpu().numpy() * np.power(2, i)
+                if len(self.stop_list[i]) != 0:
+                    mask_depth_arm *= torch.from_numpy(unfinished_fun(code_sum_arm, self.stop_list[i])).cuda().type_as(mask_depth_arm)
+            it_arm = torch.from_numpy(code2vocab_fun(code_sum_arm, self.code2vocab)).cuda().long()
+            unfinished_arm = unfinished_arm * (it_arm > 0)
+            it_arm = it_arm * unfinished_arm.type_as(it_arm)
+            seqs_arm[:, t-1] = it_arm
+        # evaluate reward
+        seq_per_img = batch_size // len(data['gts'])
+        gts = OrderedDict()
+        for i in range(len(data['gts'])):
+            gts[i] = [array_to_str(data['gts'][i][j]) for j in range(len(data['gts'][i]))]
+        seqs_arm = seqs_arm.data.cpu().numpy()
+        res_ = []
+        gts_arm = {}
+        for i in range(completion_size):
+            res_.append({'image_id': i, 'caption': [array_to_str(seqs_arm[i])]})
+            i_index = i % (completion_size / 2)
+            gts_arm[i] = gts[i_index // seq_per_img]
+        _, arm_metric_value = CiderD_scorer.compute_score(gts_arm, res_)
+        f_delta[need_run_index.cpu().numpy().astype(bool)] = arm_metric_value[0:(need_run_index.sum().cpu().numpy())] - arm_metric_value[(need_run_index.sum().cpu().numpy()):]
+        f_delta = f_delta * (pi.squeeze(1).cpu().numpy() - 0.5)
+        if np.random.randint(1000) == 1:
+            print('average reward', np.mean(arm_metric_value))
+        return f_delta
 
 
 def map_phi(phi, code_sum):

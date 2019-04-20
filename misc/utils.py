@@ -79,7 +79,7 @@ class LanguageModelCriterion_binary(nn.Module):
         target = target[:, :length]
         mask = mask[:, :length].float()
         # not right
-        code = vocab2code[target.cpu().numpy(), :]  # batch, length, depth, numpy
+        code = vocab2code[target.cpu().numpy(), :].copy()  # batch, length, depth, numpy
         code_sum = np.cumsum(code * np.power(2, np.arange(depth)), 2)  # batch, length, depth
         loss = torch.zeros([]).float().cuda()
         mask_sum = 0
@@ -98,7 +98,7 @@ class LanguageModelCriterion_binary(nn.Module):
                 #TODO: efficient map phi
                 phi_index = map_phi(phi_list[i], code_sum[:, :, i - 1] * (code[:, :, i] >= 0))  # batch, length
                 output_logit = input.gather(2, torch.from_numpy(phi_index).long().cuda().unsqueeze(2))  # input_logit: batch, length, V-1, gather: batch, length
-                mask_step = torch.from_numpy((code[:, :, i] >= 0).astype(int)).cuda().float() * mask
+                mask_step = torch.from_numpy((code[:, :, i] >= 0).astype(int)).cuda().float() * mask_step
                 mask_sum += mask_step.sum()
                 loss -= ((output_logit.squeeze(2) * torch.from_numpy(code[:, :, i]).cuda().float() -
                          torch.log(1 + torch.exp(output_logit.squeeze(2)))) * mask_step).sum()

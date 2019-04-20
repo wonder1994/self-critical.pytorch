@@ -173,7 +173,7 @@ class FCModel_binary(CaptionModel):
             if t == self.seq_length + 1: # skip if we achieve maximum length
                 break
             if t >= 1:
-                mask_depth = unfinished
+                mask_depth = unfinished.clone()
                 code_sum = np.zeros(batch_size)
                 for i in range(self.depth):
                     if i == 0: #two level mask ugly!

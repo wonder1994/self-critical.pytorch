@@ -185,11 +185,14 @@ class FCModel_binary(CaptionModel):
                                             np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
                     phi_exp_depth = phi_exp.gather(1, phi_index)  # batch, 1
                     phi_depth = phi.gather(1, phi_index)
-                    pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
+                    if sample_max:
+                        pi = 0.5
+                    else:
+                        pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
                     it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))  # int8
                     binary_code[:, t - 1, i] = it_depth.squeeze(1) * mask_depth
                     output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - torch.log(1.0 + phi_exp_depth)).squeeze(1)
-                    if len(self.stop_list[i]) != 0 and i < self.depth - 1:
+                    if len(self.stop_list[i]) != 0:
                         mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
                     code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
                 it = torch.from_numpy(code2vocab_fun(code_sum, self.code2vocab)).cuda().long()

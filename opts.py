@@ -114,6 +114,8 @@ def parse_opt():
                         help='weight to update target actor')
     parser.add_argument('--ref_num', type=int, default=1,
                         help='reference number for ars')
+    parser.add_argument('--binary_tree_coding_dir', type=str, default='/',
+                    help='directory to get binary mapping')
 
     #Optimization: for the Language Model
     parser.add_argument('--optim', type=str, default='adam',

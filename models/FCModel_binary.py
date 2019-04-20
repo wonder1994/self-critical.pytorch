@@ -7,6 +7,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import *
 import misc.utils as utils
+import os
+from six.moves import cPickle
+import numpy as np
 
 from .CaptionModel import CaptionModel
 
@@ -16,14 +19,14 @@ class LSTMCore(nn.Module):
         self.input_encoding_size = opt.input_encoding_size
         self.rnn_size = opt.rnn_size
         self.drop_prob_lm = opt.drop_prob_lm
-        
+
         # Build a LSTM
         self.i2h = nn.Linear(self.input_encoding_size, 5 * self.rnn_size)
         self.h2h = nn.Linear(self.rnn_size, 5 * self.rnn_size)
         self.dropout = nn.Dropout(self.drop_prob_lm)
 
     def forward(self, xt, state):
-        
+
         all_input_sums = self.i2h(xt) + self.h2h(state[0][-1])
         sigmoid_chunk = all_input_sums.narrow(1, 0, 3 * self.rnn_size)
         sigmoid_chunk = F.sigmoid(sigmoid_chunk)
@@ -58,9 +61,16 @@ class FCModel_binary(CaptionModel):
         self.img_embed = nn.Linear(self.fc_feat_size, self.input_encoding_size)
         self.core = LSTMCore(opt)
         self.embed = nn.Embedding(self.vocab_size + 1, self.input_encoding_size)
-        self.logit = nn.Linear(self.rnn_size, self.vocab_size + 1)
+        self.logit = nn.Linear(self.rnn_size, self.vocab_size)
 
         self.init_weights()
+        with open(os.path.join(opt.binary_tree_coding_dir, 'binary_tree_coding.pkl')) as f:
+            binary_tree_coding = cPickle.load(f)
+        self.depth = binary_tree_coding['depth']
+        self.vocab2code = binary_tree_coding['vocab2code']
+        self.phi_list = binary_tree_coding['phi_list']
+        self.stop_list = binary_tree_coding['stop_list']
+        self.code2vocab = binary_tree_coding['code2vocab']
 
     def init_weights(self):
         initrange = 0.1
@@ -77,6 +87,7 @@ class FCModel_binary(CaptionModel):
             return weight.new_zeros(self.num_layers, bsz, self.rnn_size)
 
     def _forward(self, fc_feats, att_feats, seq, att_masks=None):
+        # sequence is padded with zero in the beginning
         batch_size = fc_feats.size(0)
         state = self.init_hidden(batch_size)
         outputs = []
@@ -85,27 +96,14 @@ class FCModel_binary(CaptionModel):
             if i == 0:
                 xt = self.img_embed(fc_feats)
             else:
-                if self.training and i >= 2 and self.ss_prob > 0.0: # otherwiste no need to sample
-                    sample_prob = fc_feats.data.new(batch_size).uniform_(0, 1)
-                    sample_mask = sample_prob < self.ss_prob
-                    if sample_mask.sum() == 0:
-                        it = seq[:, i-1].clone()
-                    else:
-                        sample_ind = sample_mask.nonzero().view(-1)
-                        it = seq[:, i-1].data.clone()
-                        #prob_prev = torch.exp(outputs[-1].data.index_select(0, sample_ind)) # fetch prev distribution: shape Nx(M+1)
-                        #it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1))
-                        prob_prev = torch.exp(outputs[-1].data) # fetch prev distribution: shape Nx(M+1)
-                        it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1).index_select(0, sample_ind))
-                else:
-                    it = seq[:, i-1].clone()
+                it = seq[:, i-1].clone()
                 # break if all the sequences end
                 if i >= 2 and seq[:, i-1].sum() == 0:
                     break
                 xt = self.embed(it)
 
             output, state = self.core(xt, state)
-            output = F.log_softmax(self.logit(output), dim=1)
+            output = self.logit(output)
             outputs.append(output)
 
         return torch.cat([_.unsqueeze(1) for _ in outputs[1:]], 1).contiguous()
@@ -156,9 +154,10 @@ class FCModel_binary(CaptionModel):
 
         batch_size = fc_feats.size(0)
         state = self.init_hidden(batch_size)
-        seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long)
-        seqLogprobs = fc_feats.new_zeros(batch_size, self.seq_length)
-        seqLogprobs_total = fc_feats.new_zeros(batch_size, self.seq_length, self.vocab_size + 1)
+        seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long).cuda()
+        output_logit = fc_feats.new_zeros(batch_size, self.seq_length, self.depth).cuda()
+        unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8).cuda()
+        binary_code = fc_feats.new_ones(batch_size, self.seq_length, self.depth, dtype=torch.uint8).cuda()
         for t in range(self.seq_length + 2):
             if t == 0:
                 xt = self.img_embed(fc_feats)
@@ -168,37 +167,71 @@ class FCModel_binary(CaptionModel):
                 xt = self.embed(it)
 
             output, state = self.core(xt, state)
-            logprobs = F.log_softmax(self.logit(output), dim=1)
-
+            phi = self.logit(output) # phi: batch, vocab-1
+            phi_exp = torch.exp(phi)
             # sample the next_word
             if t == self.seq_length + 1: # skip if we achieve maximum length
                 break
-            if sample_max:
-                sampleLogprobs, it = torch.max(logprobs.data, 1)
-                it = it.view(-1).long()
-            else:
-                if temperature == 1.0:
-                    prob_prev = torch.exp(logprobs.data).cpu() # fetch prev distribution: shape Nx(M+1)
-                else:
-                    # scale logprobs by temperature
-                    prob_prev = torch.exp(torch.div(logprobs.data, temperature)).cpu()
-                it = torch.multinomial(prob_prev, 1).cuda()
-                sampleLogprobs = logprobs.gather(1, it) # gather the logprobs at sampled positions
-                it = it.view(-1).long() # and flatten indices for downstream processing
-
             if t >= 1:
-                # stop when all finished
+                mask_depth = unfinished
+                code_sum = np.zeros(batch_size)
+                for i in range(self.depth):
+                    if i == 0: #two level mask ugly!
+                        phi_index = torch.zeros(batch_size, 1).long().cuda()
+                    if i > 0:
+                        if mask_depth.sum() == 0:
+                            break
+                        phi_index = torch.from_numpy(map_phi(self.phi_list[i],
+                                            np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
+                    phi_exp_depth = phi_exp.gather(1, phi_index)  # batch, 1
+                    phi_depth = phi.gather(1, phi_index)
+                    pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
+                    it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))  # int8
+                    binary_code[:, t - 1, i] = it_depth.squeeze(1) * mask_depth
+                    output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - torch.log(1.0 + phi_exp_depth)).squeeze(1)
+                    if len(self.stop_list[i]) != 0 and i < self.depth - 1:
+                        mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
+                    code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
+                it = torch.from_numpy(code2vocab_fun(code_sum, self.code2vocab)).cuda().long()
                 if t == 1:
                     unfinished = it > 0
                 else:
                     unfinished = unfinished * (it > 0)
                 it = it * unfinished.type_as(it)
-                seq[:,t-1] = it #seq[t] the input of t+2 time step
-                seqLogprobs[:,t-1] = sampleLogprobs.view(-1)
-                seqLogprobs_total[:,t-1,:] = logprobs
+                seq[:, t-1] = it
                 if unfinished.sum() == 0:
                     break
-        if total_probs:
-            return seq, seqLogprobs_total
-        else:
-            return seq, seqLogprobs
+        return seq, output_logit
+
+
+def map_phi(phi, code_sum):
+    # phi: a dictionary,
+    # code_sum, a matrix containing code_sum: batch, length
+    phi_index = np.zeros_like(code_sum)
+    batch, length = np.shape(code_sum)
+    if len(phi) < batch * length:
+        for i in phi:
+            phi_index[code_sum == i] = phi[i]
+    else:
+        for i in range(batch):
+            for j in range(length):
+                if phi.get(code_sum[i, j]) is not None:
+                    phi_index[i, j] = phi[code_sum[i, j]]
+                else:
+                    phi_index[i, j] = 0
+    return phi_index
+
+def unfinished_fun(code_sum, stop_list_i):
+    # code_sum: batch, stop_list_i: list of code_sum that should stop
+    batch_size = np.shape(code_sum)[0]
+    unfinished = np.zeros(batch_size)
+    for i in range(batch_size):
+        unfinished[i] = np.sum(code_sum[i] == np.array(stop_list_i)) == 0
+    return unfinished
+
+def code2vocab_fun(code_sum, code2vocab):
+    batch_size = np.shape(code_sum)[0]
+    vocab_return = np.zeros(batch_size)
+    for i in range(batch_size):
+        vocab_return[i] = code2vocab[code_sum[i]]
+    return vocab_return

@@ -16,7 +16,7 @@ from six.moves import cPickle
 import opts
 import models
 from dataloader import *
-import eval_utils
+import eval_utils_binary
 import misc.utils as utils
 from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss, get_rf_loss
 from models.CriticModel import CriticModel
@@ -77,23 +77,6 @@ def train(opt):
     model = models.setup(opt).cuda()
     dp_model = model
 
-    target_actor = models.setup(opt).cuda()
-
-    ######################### Binary tree coding #####################################################################
-    with open(os.path.join(opt.binary_tree_coding_dir, 'binary_tree_coding.pkl')) as f:
-        binary_tree_coding = cPickle.load(f)
-        opt.depth = binary_tree_coding['depth']
-        opt.vocab2code
-        binary_tree_coding = {'depth': 30, 'vocab2code': vocab2code, 'phi_list': phi_list, 'stop_list': stop_list,
-                              'code2vocab': code2vocab}
-
-
-
-
-
-
-
-
 
 
 
@@ -103,7 +86,7 @@ def train(opt):
     # Assure in training mode
     dp_model.train()
 
-    crit = utils.LanguageModelCriterion()
+    crit = utils.LanguageModelCriterion_binary()
     rl_crit = utils.RewardCriterion()
 
     optimizer = utils.build_optimizer(model.parameters(), opt)
@@ -151,7 +134,8 @@ def train(opt):
         fc_feats, att_feats, labels, masks, att_masks = tmp
         optimizer.zero_grad()
         if not sc_flag:
-            loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:])
+            loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:], dp_model.depth,
+                        dp_model.vocab2code, dp_model.phi_list)
         else:
             if opt.rl_type == 'sc':
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
@@ -264,7 +248,7 @@ def train(opt):
             eval_kwargs = {'split': 'val',
                             'dataset': opt.input_json}
             eval_kwargs.update(vars(opt))
-            val_loss, predictions, lang_stats = eval_utils.eval_split(dp_model, crit, loader, eval_kwargs)
+            val_loss, predictions, lang_stats = eval_utils_binary.eval_split(dp_model, crit, loader, eval_kwargs)
 
             # Write validation result into summary
             add_summary_value(tb_summary_writer, 'validation loss', val_loss, iteration)

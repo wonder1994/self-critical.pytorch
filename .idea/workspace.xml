@@ -5,13 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1dd16f5b-93ec-4b86-be7e-5e8a808ba8f2" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/arm_binary.sh" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mle.sh" beforeDir="false" afterPath="$PROJECT_DIR$/mle.sh" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mle_binary.sh" beforeDir="false" afterPath="$PROJECT_DIR$/mle_binary.sh" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/models/FCModel_binary.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/FCModel_binary.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/output_cider.py" beforeDir="false" afterPath="$PROJECT_DIR$/output_cider.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/train_binary.py" beforeDir="false" afterPath="$PROJECT_DIR$/train_binary.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -49,23 +43,23 @@
       </usages-collector>
       <usages-collector id="statistics.file.extensions.edit">
         <counts>
-          <entry key="py" value="42015" />
+          <entry key="py" value="42596" />
           <entry key="sh" value="1383" />
         </counts>
       </usages-collector>
       <usages-collector id="statistics.file.types.edit">
         <counts>
           <entry key="PLAIN_TEXT" value="1383" />
-          <entry key="Python" value="42015" />
+          <entry key="Python" value="42596" />
         </counts>
       </usages-collector>
     </session>
   </component>
   <component name="FileEditorManager">
-    <splitter split-orientation="horizontal" split-proportion="0.16340362">
+    <splitter split-orientation="horizontal" split-proportion="0.16260745">
       <split-first>
         <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-          <file pinned="false" current-in-tab="true">
+          <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/train_binary.py">
               <provider selected="true" editor-type-id="text-editor">
                 <state relative-caret-position="492">
@@ -89,10 +83,10 @@
               </provider>
             </entry>
           </file>
-          <file pinned="false" current-in-tab="false">
+          <file pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/misc/rewards.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="2544">
+                <state relative-caret-position="263">
                   <caret line="638" column="88" lean-forward="true" selection-start-line="638" selection-start-column="62" selection-end-line="638" selection-end-column="88" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
@@ -118,12 +112,12 @@
             <entry file="file://$PROJECT_DIR$/models/FCModel_binary.py">
               <provider selected="true" editor-type-id="text-editor">
                 <state relative-caret-position="214">
-                  <caret line="270" column="29" selection-start-line="270" selection-start-column="20" selection-end-line="270" selection-end-column="29" />
+                  <caret line="271" column="29" selection-start-line="271" selection-start-column="20" selection-end-line="271" selection-end-column="29" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
-                    <marker date="1555791053750" expanded="true" signature="20467:20472" ph="..." />
-                    <marker date="1555791053750" expanded="true" signature="20467:20744" ph="..." />
-                    <marker date="1555791053750" expanded="true" signature="20785:20790" ph="..." />
+                    <marker date="1555877652202" expanded="true" signature="20727:20732" ph="..." />
+                    <marker date="1555877652202" expanded="true" signature="20727:21004" ph="..." />
+                    <marker date="1555877652202" expanded="true" signature="21045:21050" ph="..." />
                   </folding>
                 </state>
               </provider>
@@ -136,13 +130,13 @@
           <file pinned="false" current-in-tab="true">
             <entry file="file://$PROJECT_DIR$/models/FCModel_binary.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="452">
-                  <caret line="313" column="78" lean-forward="true" selection-start-line="313" selection-start-column="78" selection-end-line="313" selection-end-column="78" />
+                <state relative-caret-position="510">
+                  <caret line="398" column="28" lean-forward="true" selection-start-line="398" selection-start-column="28" selection-end-line="398" selection-end-column="28" />
                   <folding>
                     <element signature="e#0#38#0" expanded="true" />
-                    <marker date="1555791053750" expanded="true" signature="20467:20472" ph="..." />
-                    <marker date="1555791053750" expanded="true" signature="20467:20744" ph="..." />
-                    <marker date="1555791053750" expanded="true" signature="20785:20790" ph="..." />
+                    <marker date="1555877652202" expanded="true" signature="20727:20732" ph="..." />
+                    <marker date="1555877652202" expanded="true" signature="20727:21004" ph="..." />
+                    <marker date="1555877652202" expanded="true" signature="21045:21050" ph="..." />
                   </folding>
                 </state>
               </provider>
@@ -160,7 +154,7 @@
           <file pinned="false" current-in-tab="false">
             <entry file="file://$PROJECT_DIR$/opts.py">
               <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="183">
+                <state relative-caret-position="32">
                   <caret line="70" column="25" selection-start-line="70" selection-start-column="25" selection-end-line="70" selection-end-column="38" />
                 </state>
               </provider>
@@ -241,8 +235,6 @@
   </component>
   <component name="FindInProjectRecents">
     <findStrings>
-      <find>seqLogprobs_total</find>
-      <find>checkpoint</find>
       <find>opt</find>
       <find>softmax</find>
       <find>vocab</find>
@@ -259,7 +251,6 @@
       <find>target_critic_loss_fun_mask</find>
       <find>seq</find>
       <find>mask_depth</find>
-      <find>5</find>
       <find>mask_step</find>
       <find>code_sum</find>
       <find>pi</find>
@@ -267,10 +258,13 @@
       <find>pi_depth</find>
       <find>array_to_str</find>
       <find>arm_binary_step</find>
-      <find>embed</find>
       <find>sc_flag</find>
-      <find>init_scorer</find>
       <find>randin</find>
+      <find>completion_size</find>
+      <find>init_scorer</find>
+      <find>18</find>
+      <find>embed</find>
+      <find>5</find>
     </findStrings>
   </component>
   <component name="Git.Settings">
@@ -318,8 +312,8 @@
         <option value="$PROJECT_DIR$/mle.sh" />
         <option value="$PROJECT_DIR$/output_cider.py" />
         <option value="$PROJECT_DIR$/arm_binary.sh" />
-        <option value="$PROJECT_DIR$/models/FCModel_binary.py" />
         <option value="$PROJECT_DIR$/train_binary.py" />
+        <option value="$PROJECT_DIR$/models/FCModel_binary.py" />
       </list>
     </option>
   </component>
@@ -411,7 +405,7 @@
     <frame x="0" y="0" width="1440" height="900" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.064129665" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.016208598" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
       <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
@@ -729,13 +723,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/opts.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="183">
-          <caret line="70" column="25" selection-start-line="70" selection-start-column="25" selection-end-line="70" selection-end-column="38" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/mle.sh">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="330">
@@ -801,12 +788,12 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/models/AttCriticModel.py">
+    <entry file="file://$PROJECT_DIR$/train_binary.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="489">
-          <caret line="425" column="36" selection-start-line="425" selection-start-column="36" selection-end-line="425" selection-end-column="36" />
+        <state relative-caret-position="492">
+          <caret line="203" column="42" lean-forward="true" selection-start-line="203" selection-start-column="42" selection-end-line="203" selection-end-column="42" />
           <folding>
-            <element signature="e#140#178#0" expanded="true" />
+            <element signature="e#0#38#0" expanded="true" />
           </folding>
         </state>
       </provider>
@@ -820,7 +807,7 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/misc/rewards.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="2544">
+        <state relative-caret-position="263">
           <caret line="638" column="88" lean-forward="true" selection-start-line="638" selection-start-column="62" selection-end-line="638" selection-end-column="88" />
           <folding>
             <element signature="e#0#38#0" expanded="true" />
@@ -829,25 +816,32 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/train_binary.py">
+    <entry file="file://$PROJECT_DIR$/models/AttCriticModel.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="492">
-          <caret line="203" column="42" lean-forward="true" selection-start-line="203" selection-start-column="42" selection-end-line="203" selection-end-column="42" />
+        <state relative-caret-position="489">
+          <caret line="425" column="36" selection-start-line="425" selection-start-column="36" selection-end-line="425" selection-end-column="36" />
           <folding>
-            <element signature="e#0#38#0" expanded="true" />
+            <element signature="e#140#178#0" expanded="true" />
           </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/opts.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="32">
+          <caret line="70" column="25" selection-start-line="70" selection-start-column="25" selection-end-line="70" selection-end-column="38" />
         </state>
       </provider>
     </entry>
     <entry file="file://$PROJECT_DIR$/models/FCModel_binary.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="452">
-          <caret line="313" column="78" lean-forward="true" selection-start-line="313" selection-start-column="78" selection-end-line="313" selection-end-column="78" />
+        <state relative-caret-position="510">
+          <caret line="398" column="28" lean-forward="true" selection-start-line="398" selection-start-column="28" selection-end-line="398" selection-end-column="28" />
           <folding>
             <element signature="e#0#38#0" expanded="true" />
-            <marker date="1555791053750" expanded="true" signature="20467:20472" ph="..." />
-            <marker date="1555791053750" expanded="true" signature="20467:20744" ph="..." />
-            <marker date="1555791053750" expanded="true" signature="20785:20790" ph="..." />
+            <marker date="1555877652202" expanded="true" signature="20727:20732" ph="..." />
+            <marker date="1555877652202" expanded="true" signature="20727:21004" ph="..." />
+            <marker date="1555877652202" expanded="true" signature="21045:21050" ph="..." />
           </folding>
         </state>
       </provider>

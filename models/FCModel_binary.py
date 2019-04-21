@@ -11,6 +11,7 @@ import os
 from six.moves import cPickle
 import numpy as np
 
+from time import time
 from .CaptionModel import CaptionModel
 
 from collections import OrderedDict
@@ -91,7 +92,7 @@ class FCModel_binary(CaptionModel):
         self.logit = nn.Linear(self.rnn_size, self.vocab_size)
 
         self.init_weights()
-        with open(os.path.join(opt.binary_tree_coding_dir, 'binary_tree_coding.pkl')) as f:
+        with open(os.path.join(opt.binary_tree_coding_dir)) as f:
             binary_tree_coding = cPickle.load(f)
         self.depth = binary_tree_coding['depth']
         self.vocab2code = binary_tree_coding['vocab2code']
@@ -323,6 +324,7 @@ class FCModel_binary(CaptionModel):
         code_sum_arm = np.concatenate([code_sum[need_run_index.cpu().numpy().astype(bool)], code_sum[need_run_index.cpu().numpy().astype(bool)]], 0)
         mask_depth_arm = torch.cat([mask_depth[need_run_index], mask_depth[need_run_index]], 0)
         it_depth_arm = torch.cat([it_1[need_run_index, :], it_0[need_run_index, :]], 0)
+        ## complete words
         binary_code_arm[:, step - 1, depth] = it_depth_arm.squeeze(1) * mask_depth_arm
         code_sum_arm += (it_depth_arm.squeeze(1) * mask_depth_arm).cpu().numpy() * np.power(2, depth)
         if len(self.stop_list[depth]) != 0:
@@ -345,6 +347,8 @@ class FCModel_binary(CaptionModel):
         unfinished_arm = unfinished_arm * (it_arm > 0)
         it_arm = it_arm * unfinished_arm.type_as(it_arm)
         seqs_arm[:, step-1] = it_arm
+        # TODO: combine steps at the same level and run all of them together.
+        # complete sentences: input: state_arm, it_arm, unfinished_arm, seqs_arm,
         for t in range(step + 1, self.seq_length + 1):
             if unfinished_arm.sum() == 0:
                 break
@@ -376,7 +380,7 @@ class FCModel_binary(CaptionModel):
             unfinished_arm = unfinished_arm * (it_arm > 0)
             it_arm = it_arm * unfinished_arm.type_as(it_arm)
             seqs_arm[:, t-1] = it_arm
-        # evaluate reward
+        # evaluate reward: input:
         seq_per_img = batch_size // len(data['gts'])
         gts = OrderedDict()
         for i in range(len(data['gts'])):
@@ -386,12 +390,12 @@ class FCModel_binary(CaptionModel):
         gts_arm = {}
         for i in range(completion_size):
             res_.append({'image_id': i, 'caption': [array_to_str(seqs_arm[i])]})
-            i_index = i % (completion_size / 2)
-            gts_arm[i] = gts[i_index // seq_per_img]
+            i_index = int(i % (completion_size / 2))
+            gts_arm[i] = gts[np.arange(batch_size)[need_run_index.cpu().numpy().astype(bool)][i_index] // seq_per_img]
         _, arm_metric_value = CiderD_scorer.compute_score(gts_arm, res_)
         f_delta[need_run_index.cpu().numpy().astype(bool)] = arm_metric_value[0:(need_run_index.sum().cpu().numpy())] - arm_metric_value[(need_run_index.sum().cpu().numpy()):]
         f_delta = f_delta * (pi.squeeze(1).cpu().numpy() - 0.5)
-        if np.random.randint(1000) == 1:
+        if np.random.randint(100) == 1:
             print('average reward', np.mean(arm_metric_value))
         return f_delta
 

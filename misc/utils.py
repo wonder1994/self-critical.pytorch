@@ -94,7 +94,6 @@ class LanguageModelCriterion_binary(nn.Module):
             else:
                 if np.sum(code[:, :, i] == -1) == batch_size * length:
                     break
-
                 #TODO: efficient map phi
                 phi_index = map_phi(phi_list[i], code_sum[:, :, i - 1] * (code[:, :, i] >= 0))  # batch, length
                 output_logit = input.gather(2, torch.from_numpy(phi_index).long().cuda().unsqueeze(2))  # input_logit: batch, length, V-1, gather: batch, length

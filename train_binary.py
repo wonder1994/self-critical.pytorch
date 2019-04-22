@@ -151,7 +151,7 @@ def train(opt):
                 #print(loss)
                 reward = np.zeros([2,2])
             elif opt.rl_type == 'arm':
-                loss = dp_model.get_arm_loss_binary(fc_feats, att_feats, att_masks, opt, data, loader)
+                loss = dp_model.get_arm_loss_binary_fast(fc_feats, att_feats, att_masks, opt, data, loader)
                 #print(loss)
                 reward = np.zeros([2,2])
             elif opt.rl_type == 'rf4':

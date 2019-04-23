@@ -83,6 +83,7 @@ class LanguageModelCriterion_binary(nn.Module):
         code_sum = np.cumsum(code * np.power(2, np.arange(depth)), 2)  # batch, length, depth
         loss = torch.zeros([]).float().cuda()
         mask_sum = 0
+        #TODO: fix log_softmax
         for i in range(depth):
             if i == 0:
                 phi_index = torch.zeros(batch_size, length, 1).long().cuda()
@@ -90,7 +91,7 @@ class LanguageModelCriterion_binary(nn.Module):
                 mask_step = mask
                 mask_sum += mask_step.sum()
                 loss -= ((output_logit.squeeze(2) * torch.from_numpy(code[:, :, i]).cuda().float() -
-                         torch.log(1 + torch.exp(output_logit.squeeze(2)))) * mask_step).sum()
+                         LogOnePlusExp(output_logit.squeeze(2))) * mask_step).sum()
             else:
                 if np.sum(code[:, :, i] == -1) == batch_size * length:
                     break
@@ -100,11 +101,17 @@ class LanguageModelCriterion_binary(nn.Module):
                 mask_step = torch.from_numpy((code[:, :, i] >= 0).astype(int)).cuda().float() * mask_step
                 mask_sum += mask_step.sum()
                 loss -= ((output_logit.squeeze(2) * torch.from_numpy(code[:, :, i]).cuda().float() -
-                         torch.log(1 + torch.exp(output_logit.squeeze(2)))) * mask_step).sum()
+                          LogOnePlusExp(output_logit.squeeze(2))) * mask_step).sum()
         loss = loss / mask_sum
 
         return loss
 
+
+def LogOnePlusExp(x):
+    result = torch.zeros_like(x).float().cuda()
+    result[x > 0] = (x[x > 0] + torch.log1p(torch.exp(-x[x > 0])))
+    result[x <= 0] = torch.log1p(torch.exp(x[x <= 0]))
+    return result
 
 def map_phi(phi, code_sum):
     # phi: a dictionary,

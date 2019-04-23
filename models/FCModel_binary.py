@@ -196,7 +196,6 @@ class FCModel_binary(CaptionModel):
 
             output, state = self.core(xt, state)
             phi = self.logit(output) # phi: batch, vocab-1
-            phi_exp = torch.exp(phi)
             # sample the next_word
             if t == self.seq_length + 1: # skip if we achieve maximum length
                 break
@@ -211,15 +210,14 @@ class FCModel_binary(CaptionModel):
                             break
                         phi_index = torch.from_numpy(map_phi(self.phi_list[i],
                                             np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
-                    phi_exp_depth = phi_exp.gather(1, phi_index)  # batch, 1
                     phi_depth = phi.gather(1, phi_index)
                     if sample_max:
                         pi = 0.5
                     else:
                         pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-                    it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))  # int8
+                    it_depth = (pi > binary_softmax(phi_depth))  # int8
                     binary_code[:, t - 1, i] = it_depth.squeeze(1) * mask_depth
-                    output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - torch.log(1.0 + phi_exp_depth)).squeeze(1)
+                    output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - LogOnePlusExp(phi_depth)).squeeze(1)
                     code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
                     if len(self.stop_list[i]) != 0:
                         mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
@@ -234,110 +232,6 @@ class FCModel_binary(CaptionModel):
                     break
         return seq, output_logit
 
-    def get_arm_loss_binary(self, fc_feats, att_feats, att_masks, opt, data, loader):
-        sample_max = 0
-        batch_size = fc_feats.size(0)
-        state = self.init_hidden(batch_size)
-        seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long).cuda()
-        output_logit = fc_feats.new_zeros(batch_size, self.seq_length, self.depth).cuda()
-        unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8).cuda()
-        binary_code = fc_feats.new_ones(batch_size, self.seq_length, self.depth, dtype=torch.uint8).cuda()
-        loss = torch.zeros([]).float().cuda()
-        mask_sum = 0
-        for t in range(self.seq_length + 2):
-            if t == 0:
-                xt = self.img_embed(fc_feats)
-            else:
-                if t == 1: # input <bos>
-                    it = fc_feats.data.new(batch_size).long().zero_()
-                xt = self.embed(it)
-
-            output, state = self.core(xt, state)
-            phi = self.logit(output) # phi: batch, vocab-1
-            phi_exp = torch.exp(phi)
-            if t == self.seq_length + 1: # skip if we achieve maximum length
-                break
-            if t >= 1:
-                mask_depth = unfinished.clone() # batch,
-                code_sum = np.zeros(batch_size)
-                for i in range(self.depth):
-                    if i == 0: #two level mask ugly!
-                        phi_index = torch.zeros(batch_size, 1).long().cuda()
-                    if i > 0:
-                        if mask_depth.sum() == 0:
-                            break
-                        phi_index = torch.from_numpy(map_phi(self.phi_list[i],
-                                            np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
-                    phi_exp_depth = phi_exp.gather(1, phi_index)  # batch, 1
-                    phi_depth = phi.gather(1, phi_index)
-                    f_delta = self.arm_binary_step(phi_depth, phi, data, seq, t, i, state, unfinished, mask_depth, loader,
-                                                   opt, binary_code, code_sum)
-                    loss -= (torch.from_numpy(f_delta).cuda().float() * phi_depth.squeeze(1) * mask_depth.float()).sum()
-                    mask_sum += mask_depth.sum()
-                    if sample_max:
-                        pi = 0.5
-                    else:
-                        pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-                    it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))  # int8
-                    binary_code[:, t - 1, i] = it_depth.squeeze(1) * mask_depth
-                    output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - torch.log(1.0 + phi_exp_depth)).squeeze(1)
-                    code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
-                    if len(self.stop_list[i]) != 0:
-                        mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
-                it = torch.from_numpy(code2vocab_fun(code_sum, self.code2vocab)).cuda().long()
-                if t == 1:
-                    unfinished = it > 0
-                else:
-                    unfinished = unfinished * (it > 0)
-                it = it * unfinished.type_as(it)
-                seq[:, t-1] = it
-                if unfinished.sum() == 0:
-                    break
-        return loss / mask_sum
-
-
-    def arm_binary_step(self, phi_depth, phi, data, pre_seq, step, depth, state, unfinished, mask_depth, loader, opt, binary_code, code_sum):
-        #TODO: pay attention to where copy is needed.
-        # pseudo actions:
-        sample_max = 0
-        batch_size = phi_depth.size(0)
-        pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-        it_1 = (pi > 1.0 / (1.0 + torch.exp(phi_depth)))
-        it_0 = (pi < 1.0 / (1.0 + torch.exp(-phi_depth)))
-        pseudo_actions = torch.cat([it_1, it_0], 1) #batch, 2
-        f_delta = np.zeros(batch_size)
-        if mask_depth.sum() != batch_size:
-            pseudo_actions[(1 - mask_depth), :] = 0
-        need_run_index = (pseudo_actions[:, 1] != pseudo_actions[:, 0]) # batch
-        if need_run_index.sum() == 0:
-            return f_delta
-        completion_size = need_run_index.sum().cpu().numpy() * 2
-        # connect seq, state, binary_code, unfinished, mask_depth, target/data
-        seqs_arm, phi_arm, unfinished_arm, state_arm, binary_code_arm, code_sum_arm, mask_depth_arm, it_depth_arm = \
-            concatenate_arm(need_run_index, pre_seq, phi, unfinished, state, binary_code, code_sum, mask_depth,
-                            it_1, it_0)
-
-        binary_code_arm[:, step - 1, depth] = it_depth_arm.squeeze(1) * mask_depth_arm
-        code_sum_arm += (it_depth_arm.squeeze(1) * mask_depth_arm).cpu().numpy() * np.power(2, depth)
-        if len(self.stop_list[depth]) != 0:
-            mask_depth_arm *= torch.from_numpy(unfinished_fun(code_sum_arm, self.stop_list[depth])).cuda().type_as(mask_depth_arm)
-        ## complete words
-        code_sum_arm = self.word_completion(depth, phi_arm, unfinished_arm, code_sum_arm, mask_depth_arm, sample_max)
-        it_arm = torch.from_numpy(code2vocab_fun(code_sum_arm, self.code2vocab)).cuda().long()
-        unfinished_arm = unfinished_arm * (it_arm > 0)
-        it_arm = it_arm * unfinished_arm.type_as(it_arm)
-        seqs_arm[:, step-1] = it_arm
-
-        # TODO: combine steps at the same level and run all of them together.
-        # complete sentences: input: state_arm, it_arm, unfinished_arm, seqs_arm,
-        seqs_arm = self.sentence_completion(step, unfinished_arm, it_arm, state_arm, seqs_arm, sample_max)
-        # evaluate reward: input: data, need_run_index, seqs_arm
-        arm_metric_value = reward_function(data, batch_size, seqs_arm, need_run_index)
-        # f_delta: input need_run_index, arm_metric_value, pi
-        f_delta = f_delta_fun(batch_size, need_run_index, pi, arm_metric_value)
-        if np.random.randint(10) == 1:
-            print('average reward', np.mean(arm_metric_value))
-        return f_delta
 
     def word_completion(self, depth, phi, unfinished, code_sum, mask_depth, sample_max):
         batch_size = unfinished.size(0)
@@ -347,12 +241,11 @@ class FCModel_binary(CaptionModel):
             phi_index = torch.from_numpy(map_phi(self.phi_list[i],
                                                  np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
             phi_depth = phi.gather(1, phi_index)
-            phi_exp_depth = torch.exp(phi_depth)
             if sample_max:
                 pi = 0.5
             else:
                 pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-            it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))
+            it_depth = (pi > binary_softmax(phi_depth))
             code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)
             if len(self.stop_list[i]) != 0:
                 mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(
@@ -369,7 +262,6 @@ class FCModel_binary(CaptionModel):
             xt = self.embed(it)
             output, state = self.core(xt, state)
             phi = self.logit(output)
-            phi_exp = torch.exp(phi)
             mask_depth = unfinished_cp.clone()
             code_sum = np.zeros(batch_size)
             for i in range(self.depth):
@@ -381,12 +273,12 @@ class FCModel_binary(CaptionModel):
                     phi_index = torch.from_numpy(map_phi(self.phi_list[i],
                                                          np.expand_dims(code_sum * unfinished_cp.cpu().numpy(),
                                                                         1))).long().cuda()
-                phi_exp_depth = phi_exp.gather(1, phi_index)
+                phi_depth = phi.gather(1, phi_index)
                 if sample_max:
                     pi = 0.5
                 else:
                     pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-                it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))
+                it_depth = (pi > binary_softmax(phi_depth))
                 code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)
                 if len(self.stop_list[i]) != 0:
                     mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(
@@ -418,7 +310,6 @@ class FCModel_binary(CaptionModel):
 
             output, state = self.core(xt, state)
             phi = self.logit(output) # phi: batch, vocab-1
-            phi_exp = torch.exp(phi)
             # sample the next_word
             if t == self.seq_length + 1: # skip if we achieve maximum length
                 break
@@ -435,6 +326,7 @@ class FCModel_binary(CaptionModel):
                 phi_depth_list = []
                 mask_depth_list = []
                 pseudo_num_list = []
+                tic = time()
                 for i in range(self.depth):
                     if i == 0: #two level mask ugly!
                         phi_index = torch.zeros(batch_size, 1).long().cuda()
@@ -443,7 +335,6 @@ class FCModel_binary(CaptionModel):
                             break
                         phi_index = torch.from_numpy(map_phi(self.phi_list[i],
                                             np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
-                    phi_exp_depth = phi_exp.gather(1, phi_index)  # batch, 1
                     phi_depth = phi.gather(1, phi_index)
                     ## complete words, concat seqs, index, and phi_depth, pi, state, unfinished, it,
                     mask_depth_list.append(mask_depth.clone())
@@ -451,8 +342,8 @@ class FCModel_binary(CaptionModel):
                     pre_seq = seq.clone()
                     # depth = i
                     pi_i = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-                    it_1 = (pi_i > 1.0 / (1.0 + torch.exp(phi_depth)))
-                    it_0 = (pi_i < 1.0 / (1.0 + torch.exp(-phi_depth)))
+                    it_1 = (pi_i > binary_softmax(phi_depth))
+                    it_0 = (pi_i < binary_softmax(-phi_depth))
                     pseudo_actions = torch.cat([it_1, it_0], 1)  # batch, 2
                     if mask_depth.sum() != batch_size:
                         pseudo_actions[(1 - mask_depth), :] = 0
@@ -488,11 +379,13 @@ class FCModel_binary(CaptionModel):
                         pi = 0.5
                     else:
                         pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-                    it_depth = (pi > 1.0 / (1.0 + phi_exp_depth))  # int8
+                    it_depth = (pi > binary_softmax(phi_depth))  # int8
                     code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
                     if len(self.stop_list[i]) != 0:
                         mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
                 # complete the seqs together, and compute the reward, and f_delta, and loss
+                #print('word completion time ', time() - tic)
+                #print('pseudo action num ', pseudo_num_list)
                 if len(unfinished_arm_list) > 0:
                     unfinished_arm_straight = straight_fun(unfinished_arm_list)
                     it_arm_straight = straight_fun(it_arm_list)
@@ -505,7 +398,10 @@ class FCModel_binary(CaptionModel):
                             state_h_arm_straight = torch.cat([state_h_arm_straight, item[0]], 1)
                             state_c_arm_straight = torch.cat([state_c_arm_straight, item[0]], 1)
                     state_arm_straight = (state_h_arm_straight, state_c_arm_straight)
+                    tic = time()
                     seqs_arm_completed = self.sentence_completion(t, unfinished_arm_straight, it_arm_straight, state_arm_straight, seqs_arm_straight, sample_max)
+                    #print('sentence completion time ', time() - tic)
+                    tic = time()
                     start_index = 0
                     for i in range(len(mask_depth_list)):
                         pseudo_num = pseudo_num_list[i]
@@ -517,6 +413,7 @@ class FCModel_binary(CaptionModel):
                             f_delta = f_delta_fun(batch_size, need_run_index_list[i], pi_list[i], arm_metric_value)
                             loss -= (torch.from_numpy(f_delta).cuda().float() * phi_depth_list[i].squeeze(
                                 1) * mask_depth_list[i].float()).sum()
+                    #print('reward time ', time() - tic)
                 it = torch.from_numpy(code2vocab_fun(code_sum, self.code2vocab)).cuda().long()
                 if t == 1:
                     unfinished = it > 0
@@ -572,6 +469,7 @@ def f_delta_fun(batch_size, nonzero_index, pi, reward):
 
 
 def map_phi(phi, code_sum):
+    # TODO:
     # phi: a dictionary,
     # code_sum, a matrix containing code_sum: batch, length
     phi_index = np.zeros_like(code_sum)
@@ -610,3 +508,15 @@ def straight_fun(input):
         else:
             output = torch.cat([output, item], 0)
     return output
+
+def binary_softmax(phi):
+    result = torch.zeros_like(phi).float().cuda()
+    result[phi > 0] = torch.exp(-phi[phi > 0]) / (1.0 + torch.exp(-phi[phi > 0]))
+    result[phi <= 0] = 1.0 / (1.0 + torch.exp(phi[phi <= 0]))
+    return result
+
+def LogOnePlusExp(x):
+    result = torch.zeros_like(x).float().cuda()
+    result[x > 0] = (x[x > 0] + torch.log1p(torch.exp(-x[x > 0])))
+    result[x <= 0] = torch.log1p(torch.exp(x[x <= 0]))
+    return result

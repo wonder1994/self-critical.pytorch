@@ -232,6 +232,70 @@ class FCModel_binary(CaptionModel):
                     break
         return seq, output_logit
 
+    def sample_2_layer(self, fc_feats, att_feats, att_masks=None, opt={}, total_probs=False):
+        sample_max = opt.get('sample_max', 1)
+        beam_size = opt.get('beam_size', 1)
+        temperature = opt.get('temperature', 1.0)
+        if beam_size > 1:
+            return self._sample_beam(fc_feats, att_feats, opt)
+
+        batch_size = fc_feats.size(0)
+        state = self.init_hidden(batch_size)
+        seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long).cuda()
+        output_logit = fc_feats.new_zeros(batch_size, self.seq_length, self.depth).cuda()
+        unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8).cuda()
+        binary_code = fc_feats.new_ones(batch_size, self.seq_length, self.depth, dtype=torch.uint8).cuda()
+        cluster1_size = int(np.sum(self.vocab2code[:, 0]))
+        cluster0_size = int(self.vocab_size + 1 - cluster1_size)
+        for t in range(self.seq_length + 2):
+            if t == 0:
+                xt = self.img_embed(fc_feats)
+            else:
+                if t == 1: # input <bos>
+                    it = fc_feats.data.new(batch_size).long().zero_()
+                xt = self.embed(it)
+
+            output, state = self.core(xt, state)
+            phi = self.logit(output) # phi: batch, vocab-1
+            # sample the next_word
+            if t == self.seq_length + 1: # skip if we achieve maximum length
+                break
+            if t >= 1:
+                mask_depth = unfinished.clone()
+                code_sum = torch.zeros(batch_size, 1).float().cuda()
+                phi_index = torch.zeros(batch_size, 1).long().cuda()
+                phi_depth = phi.gather(1, phi_index)
+                if sample_max:
+                    pi = 0.5
+                else:
+                    pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
+                it_depth = (pi > binary_softmax(phi_depth))  # int8
+                code_sum += it_depth.float() * (self.vocab_size + 1)
+                probs_cluster1 = F.softmax(
+                    torch.cat([phi[:, 1:(cluster1_size)],  # batch, length, cluster1_size
+                               torch.ones(batch_size, 1).float().cuda()], 1), 1)
+                probs_cluster0 = F.softmax(
+                    torch.cat([phi[:, cluster1_size:],  # batch, length, cluster1_size
+                               torch.ones(batch_size, 1).float().cuda()], 1), 1)
+                cluster1_mask = it_depth == 1
+                cluster0_mask = it_depth == 0
+                it_2 = it_depth.long()
+                if cluster1_mask.sum() != 0:
+                    it_2[cluster1_mask] = torch.multinomial(probs_cluster1[cluster1_mask.squeeze(1), :].data, 1).cuda().squeeze(1)
+                if cluster0_mask.sum() != 0:
+                    it_2[cluster0_mask] = torch.multinomial(probs_cluster0[cluster0_mask.squeeze(1), :].data, 1).cuda().squeeze(1)
+                code_sum = it_depth.float() * (self.vocab_size + 1) + it_2.float()
+                it = torch.from_numpy(code2vocab_fun(code_sum.squeeze(1).cpu().numpy(), self.code2vocab)).cuda().long()
+                if t == 1:
+                    unfinished = it > 0
+                else:
+                    unfinished = unfinished * (it > 0)
+                it = it * unfinished.type_as(it)
+                seq[:, t-1] = it
+                if unfinished.sum() == 0:
+                    break
+        return seq, output_logit
+
 
     def word_completion(self, depth, phi, unfinished, code_sum, mask_depth, sample_max):
         batch_size = unfinished.size(0)

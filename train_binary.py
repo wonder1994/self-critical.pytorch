@@ -87,7 +87,7 @@ def train(opt):
     # Assure in training mode
     dp_model.train()
 
-    crit = utils.LanguageModelCriterion_binary()
+    crit = utils.LanguageModelCriterion_binary_2_layer()
     rl_crit = utils.RewardCriterion()
 
     optimizer = utils.build_optimizer(model.parameters(), opt)

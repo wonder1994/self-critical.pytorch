@@ -30,4 +30,8 @@ print(data_rf_nodemean['variance_history'])
 
 for i in range(200):
     print(i*10000 + 10000)
-    print(data_rf_nodemean['val_result_history'][i*10000 + 10000]['lang_stats'])
+
+print(data_rf_nodemean['val_result_history'][i*10000 + 10000]['lang_stats'])
+
+with open('binary_tree_coding_2_layer.pkl') as a:
+    data_rf_nodemean = pickle.load(a)

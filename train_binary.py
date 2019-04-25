@@ -136,7 +136,7 @@ def train(opt):
         optimizer.zero_grad()
         if not sc_flag:
             loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:], dp_model.depth,
-                        dp_model.vocab2code, dp_model.phi_list)
+                        dp_model.vocab2code, dp_model.phi_list, dp_model.cluster_size)
         else:
             if opt.rl_type == 'sc':
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')

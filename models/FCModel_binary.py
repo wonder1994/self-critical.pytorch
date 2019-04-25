@@ -100,6 +100,7 @@ class FCModel_binary(CaptionModel):
         self.phi_list = binary_tree_coding['phi_list']
         self.stop_list = binary_tree_coding['stop_list']
         self.code2vocab = binary_tree_coding['code2vocab']
+        self.cluster_size = binary_tree_coding.get('cluster_size')
 
     def init_weights(self):
         initrange = 0.1
@@ -236,17 +237,12 @@ class FCModel_binary(CaptionModel):
         sample_max = opt.get('sample_max', 1)
         beam_size = opt.get('beam_size', 1)
         temperature = opt.get('temperature', 1.0)
-        if beam_size > 1:
-            return self._sample_beam(fc_feats, att_feats, opt)
-
         batch_size = fc_feats.size(0)
         state = self.init_hidden(batch_size)
         seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long).cuda()
         output_logit = fc_feats.new_zeros(batch_size, self.seq_length, self.depth).cuda()
         unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8).cuda()
-        binary_code = fc_feats.new_ones(batch_size, self.seq_length, self.depth, dtype=torch.uint8).cuda()
-        cluster1_size = int(np.sum(self.vocab2code[:, 0]))
-        cluster0_size = int(self.vocab_size + 1 - cluster1_size)
+        n_cluster = len(self.cluster_size)
         for t in range(self.seq_length + 2):
             if t == 0:
                 xt = self.img_embed(fc_feats)
@@ -263,29 +259,25 @@ class FCModel_binary(CaptionModel):
             if t >= 1:
                 mask_depth = unfinished.clone()
                 code_sum = torch.zeros(batch_size, 1).float().cuda()
-                phi_index = torch.zeros(batch_size, 1).long().cuda()
-                phi_depth = phi.gather(1, phi_index)
+                probs_step_1 = F.softmax(torch.cat([phi[:, :(n_cluster-1)], torch.zeros(batch_size, 1).float().cuda()], 1), 1)
                 if sample_max:
-                    pi = 0.5
+                    it_1 = torch.max(probs_step_1.data, 1)[1].view(-1).cuda().long()
                 else:
-                    pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-                it_depth = (pi > binary_softmax(phi_depth))  # int8
-                code_sum += it_depth.float() * (self.vocab_size + 1)
-                probs_cluster1 = F.softmax(
-                    torch.cat([phi[:, 1:(cluster1_size)],  # batch, length, cluster1_size
-                               torch.ones(batch_size, 1).float().cuda()], 1), 1)
-                probs_cluster0 = F.softmax(
-                    torch.cat([phi[:, cluster1_size:],  # batch, length, cluster1_size
-                               torch.ones(batch_size, 1).float().cuda()], 1), 1)
-                cluster1_mask = it_depth == 1
-                cluster0_mask = it_depth == 0
-                it_2 = it_depth.long()
-                if cluster1_mask.sum() != 0:
-                    it_2[cluster1_mask] = torch.multinomial(probs_cluster1[cluster1_mask.squeeze(1), :].data, 1).cuda().squeeze(1)
-                if cluster0_mask.sum() != 0:
-                    it_2[cluster0_mask] = torch.multinomial(probs_cluster0[cluster0_mask.squeeze(1), :].data, 1).cuda().squeeze(1)
-                code_sum = it_depth.float() * (self.vocab_size + 1) + it_2.float()
-                it = torch.from_numpy(code2vocab_fun(code_sum.squeeze(1).cpu().numpy(), self.code2vocab)).cuda().long()
+                    it_1 = torch.multinomial(probs_step_1.data, 1).cuda().squeeze(1)
+                it_2 = torch.zeros_like(it_1).cuda()
+                start = n_cluster - 1
+                for i in range(n_cluster):
+                    if self.cluster_size[i] != 1:
+                        index = it_1 == i
+                        if index.sum() != 0:
+                            probs_step_2 = F.softmax(torch.cat([phi[index, start:(start+self.cluster_size[i]-1)], torch.zeros(index.sum(), 1).float().cuda()], 1), 1)
+                            if sample_max:
+                                it_2[index] = torch.max(probs_step_2.data, 1)[1].view(-1).cuda().long()
+                            else:
+                                it_2[index] = torch.multinomial(probs_step_2.data, 1).cuda().squeeze(1)
+                    start = start + self.cluster_size[i]-1
+                code_sum = it_1 * (self.vocab_size + 1) + it_2
+                it = torch.from_numpy(code2vocab_fun(code_sum.cpu().numpy(), self.code2vocab)).cuda().long()
                 if t == 1:
                     unfinished = it > 0
                 else:

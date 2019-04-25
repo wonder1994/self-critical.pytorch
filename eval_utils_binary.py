@@ -87,7 +87,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
 
             with torch.no_grad():
                 loss = crit(model(fc_feats, att_feats, labels, att_masks), labels[:, 1:], masks[:, 1:], model.depth,
-                     model.vocab2code, model.phi_list).item()
+                     model.vocab2code, model.phi_list, model.cluster_size).item()
             loss_sum = loss_sum + loss
             loss_evals = loss_evals + 1
 

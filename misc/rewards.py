@@ -706,7 +706,6 @@ def importance_sampling(prob, f, opt):
     return q
 
 def test_critic_sampling(prob, f, opt):
-    # unnormalized_q = prob * torch.abs(f) + opt.is_weight * (prob.pow(2).sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + 1 - prob * 2).pow(0.5) * prob * torch.abs(f)
     unnormalized_q = torch.abs(f)
     q = torch.div(unnormalized_q, (unnormalized_q.sum(1).unsqueeze(1).repeat(1, prob.size()[1]) + epsilon))
     return q

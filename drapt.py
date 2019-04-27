@@ -1,40 +1,89 @@
-def forward(self, input, target, mask, depth, vocab2code, phi_list):
-    # input: batch, length, vocab-1, cuda
-    # target: batch, length, cuda
-    # mask: batch, length, cuda,
-    # vocab2code: numpy, vocab - 1, depth
-    # phi_list: dict
-    batch_size, length, vocab_1 = input.size()
-    vocab = vocab_1 + 1  # 9488
-    target = target[:, :length]
-    mask = mask[:, :length].float()
-    # not right
-    code = vocab2code[target.cpu().numpy(), :].copy()  # batch, length, 2, numpy
-    code_sum = np.sum(vocab2code * [vocab, 1], 1)  # batch, length, depth
-    loss = torch.zeros([]).float().cuda()
-    mask_sum = 0
-    cluster1_size = int(np.sum(vocab2code[:, 0]))
-    cluster0_size = int(vocab - cluster1_size)
-    # first layer
-    phi_index = torch.zeros(batch_size, length, 1).long().cuda()
-    output_logit = input.gather(2, phi_index)
-    mask_step = mask
-    mask_sum += mask_step.sum()
-    loss -= ((output_logit.squeeze(2) * torch.from_numpy(code[:, :, 0]).cuda().float() -
-              LogOnePlusExp(output_logit.squeeze(2))) * mask_step).sum()
-    cluster1_mask = (torch.from_numpy(code[:, :, 0]) == 1).float().cuda()
-    cluster0_mask = (torch.from_numpy(code[:, :, 0]) == 0).float().cuda()
-    logits_cluster1 = F.log_softmax(torch.cat([input[:, :, 1:(cluster1_size)],  # batch, length, cluster1_size
-                                               torch.ones(batch_size, length, 1).float().cuda()], 2), 2)
+import torch
+import numpy as np
+from time import time
+def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
+    #TODO: log pi.
+    batch_size, vocab_size = logits.size()
+    index_batch = torch.arange(batch_size).cuda().long()
+    index_vocab = torch.arange(vocab_size).cuda().long()
+    min_value = torch.min(torch.log(pi) - logits, 1)[0].unsqueeze(1).repeat(1, vocab_size)
+    pseudo_actions = A_cat.unsqueeze(1).repeat(1, vocab_size)
+    pseudo_actions += ((-logits + torch.log(pi[index_batch, R_cat]).unsqueeze(1).repeat(1, vocab_size)) < min_value).long() * \
+                      (index_vocab - A_cat.unsqueeze(1))
+    pseudo_actions += ((torch.log(pi) - logits[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size)) < min_value).long() * \
+                      (R_cat - A_cat).unsqueeze(1).repeat(1, vocab_size)
+    index_matrix = torch.zeros_like(logits).long()
+    index_matrix[index_batch, A_cat] = 1
+    index_matrix[R_cat == A_cat, :] = 1
 
-    logits_cluster0 = F.log_softmax(torch.cat([input[:, :, cluster1_size:],  # batch, length, cluster0_size
-                                               torch.ones(batch_size, length, 1).float().cuda()], 2), 2)
-    code_2_cuda = torch.from_numpy(code[:, :, 1:2]).long().cuda()
-    loss -= (logits_cluster0.gather(
-        2, torch.min(code_2_cuda, (cluster0_size - 1) * torch.ones_like(code_2_cuda).long().cuda())).squeeze(
-        2) * cluster0_mask * mask).sum()
-    loss -= (logits_cluster1.gather(
-        2, torch.min(code_2_cuda, (cluster1_size - 1) * torch.ones_like(code_2_cuda).long().cuda())).squeeze(
-        2) * cluster1_mask * mask).sum()
+    topk, indices = torch.topk(-(torch.log(pi) - logits), 2, dim=1)
+    top_2_indices = indices[:, 1]
+    top_2_values = -topk[:, 1].unsqueeze(1).repeat(1, vocab_size)
+    candidate_i_value = -logits + torch.log(pi[index_batch, R_cat]).unsqueeze(1).repeat(1, vocab_size)
+    candidate_A_value = torch.log(pi) - logits[index_batch, R_cat].unsqueeze(1).repeat(1, vocab_size)
+    pseudo_actions_true = top_2_indices.unsqueeze(1).repeat(1, vocab_size)
+    pseudo_actions_true += (candidate_i_value < top_2_values).long() * (candidate_i_value <= candidate_A_value).long() * \
+                           (index_vocab - top_2_indices.unsqueeze(1))
+    pseudo_actions_true += (candidate_A_value < top_2_values).long() * (candidate_A_value < candidate_i_value).long() * \
+                           (R_cat - top_2_indices).unsqueeze(1).repeat(1, vocab_size)
 
-    return loss / mask.sum()
+    pseudo_actions = pseudo_actions + index_matrix * (pseudo_actions_true - pseudo_actions)
+    return pseudo_actions
+
+batch_size = 50
+vocab_size = 100
+logits = torch.from_numpy(np.random.normal(size=[batch_size,vocab_size])).float().cuda()
+pi =  torch.from_numpy(np.random.dirichlet(np.ones(vocab_size), batch_size)).float().cuda()
+random_ref = torch.topk(torch.rand((batch_size, vocab_size)), 2)[1].cuda().long()
+A_cat = torch.from_numpy(np.random.randint(vocab_size, size=[50])).long().cuda()
+R_cat = random_ref[:, 0]
+tic = time()
+results = pseudo_action_fun(logits,A_cat,R_cat,pi)
+print('time:', time()-tic)
+
+
+
+
+def pseudo_action_swap_matrix(pi, phi):
+    C = len(pi)
+    RaceAllSwap = np.log(pi[:, np.newaxis]) - phi[np.newaxis, :]
+    Race = np.diag(RaceAllSwap)
+    action_true = np.argmin(Race)
+    Race_min = Race[action_true]
+
+    if C < 7:
+        # Slow version for large C
+        pseudo_actions = np.full((C, C), action_true)
+        for m in range(C):
+            for jj in range(m):
+                RaceSwap = Race.copy()
+                RaceSwap[m], RaceSwap[jj] = RaceAllSwap[jj, m], RaceAllSwap[m, jj]
+                s_action = np.argmin(RaceSwap)
+                pseudo_actions[m, jj], pseudo_actions[jj, m] = s_action, s_action
+    else:
+        # Fast version for large C
+        pseudo_actions = np.full((C, C), action_true)
+
+        SwapSuccess = RaceAllSwap <= Race_min
+        SwapSuccess[action_true, :] = True
+        np.fill_diagonal(SwapSuccess, 0)
+        m_idx, j_idx = np.where(SwapSuccess)
+
+        for i in range(len(m_idx)):
+            m, jj = m_idx[i], j_idx[i]
+            RaceSwap = Race.copy()
+            RaceSwap[m], RaceSwap[jj] = RaceAllSwap[jj, m], RaceAllSwap[m, jj]
+            if m == action_true or jj == action_true:
+                s_action = np.argmin(RaceSwap)
+                pseudo_actions[m, jj], pseudo_actions[jj, m] = s_action, s_action
+            else:
+                if RaceSwap[m] < RaceSwap[jj]:
+                    pseudo_actions[m, jj], pseudo_actions[jj, m] = m, m
+                else:
+                    pseudo_actions[m, jj], pseudo_actions[jj, m] = jj, jj
+
+    return pseudo_actions
+
+tic = time()
+results = pseudo_action_swap_matrix(logits.cpu().numpy()[0,:], pi.cpu().numpy()[0,:])
+print('time:', time()-tic)

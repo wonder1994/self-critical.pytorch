@@ -379,7 +379,7 @@ class FCModel_binary(CaptionModel):
                         pseudo_actions[(1 - mask_depth), :] = 0
                     need_run_index = (pseudo_actions[:, 1] != pseudo_actions[:, 0])
                     pseudo_num_list.append(need_run_index.sum() * 2)
-                    if need_run_index.sum() == 0: #TODO: possible bug
+                    if need_run_index.sum() == 0:
                         pi_list.append('')
                         need_run_index_list.append('')
                     else:

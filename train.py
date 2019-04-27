@@ -185,7 +185,9 @@ def train(opt):
 
         # Load data from train split (0)
         data = loader.get_batch('train')
-
+        if data['bounds']['it_pos_now'] > 10000:
+            loader.reset_iterator('train')
+            continue
         dp_model.train()
         critic_model.eval()
 
@@ -305,8 +307,10 @@ def train(opt):
         #TODO make sure all sampling replaced by greedy for critic
         #### update the actor
         loss.backward()
-        # with open(os.path.join(opt.checkpoint_path, 'embeddings.pkl'), 'wb') as f:
+        # with open(os.path.join(opt.checkpoint_path, 'best_embed.pkl'), 'wb') as f:
         #     cPickle.dump(list(dp_model.embed.parameters())[0].data.cpu().numpy(), f)
+        # with open(os.path.join(opt.checkpoint_path, 'best_logit.pkl'), 'wb') as f:
+        #     cPickle.dump(list(dp_model.logit.parameters())[0].data.cpu().numpy(), f)
         ## compute variance
         gradient = torch.zeros([0]).cuda()
         for i in model.parameters():

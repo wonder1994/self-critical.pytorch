@@ -16,10 +16,10 @@ from six.moves import cPickle
 import opts
 import models
 from dataloader import *
-import eval_utils_binary
+import eval_utils_two_layer
 import misc.utils as utils
 from misc.rewards import get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss, get_rf_loss
-from models.FCModel_binary import init_scorer
+from models.FCModel_two_layer import init_scorer
 from models.CriticModel import CriticModel
 from models.AttCriticModel import AttCriticModel, critic_loss_fun, target_critic_loss_fun, target_critic_loss_fun_mask
 try:
@@ -52,8 +52,8 @@ def train(opt):
             infos = cPickle.load(f)
             saved_model_opt = infos['opt']
             need_be_same=["caption_model", "rnn_type", "rnn_size", "num_layers"]
-            for checkme in need_be_same:
-                assert vars(saved_model_opt)[checkme] == vars(opt)[checkme], "Command line argument and saved model disagree on '%s' " % checkme
+            # for checkme in need_be_same:
+            #     assert vars(saved_model_opt)[checkme] == vars(opt)[checkme], "Command line argument and saved model disagree on '%s' " % checkme
 
         if os.path.isfile(os.path.join(opt.start_from, 'histories_'+opt.id+'.pkl')):
             with open(os.path.join(opt.start_from, 'histories_'+opt.id+'.pkl')) as f:
@@ -87,7 +87,7 @@ def train(opt):
     # Assure in training mode
     dp_model.train()
     #TODO: change this to a flag
-    crit = utils.LanguageModelCriterion_binary()
+    crit = utils.LanguageModelCriterion_binary_2_layer()
     rl_crit = utils.RewardCriterion()
 
     optimizer = utils.build_optimizer(model.parameters(), opt)
@@ -127,6 +127,7 @@ def train(opt):
         if data['bounds']['it_pos_now'] > 10000:
             loader.reset_iterator('train')
             continue
+
         dp_model.train()
 
         torch.cuda.synchronize()
@@ -149,7 +150,9 @@ def train(opt):
                 reward = get_reward(data, gen_result, opt)
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
             elif opt.rl_type == 'arsm':
-                loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                loss = dp_model.get_arm_loss_two_layer_fast(fc_feats, att_feats, att_masks, opt, data, loader)
+                #print(loss)
+                reward = np.zeros([2,2])
                 #print(loss)
                 reward = np.zeros([2,2])
             elif opt.rl_type == 'arm':
@@ -255,7 +258,7 @@ def train(opt):
             eval_kwargs = {'split': 'val',
                             'dataset': opt.input_json}
             eval_kwargs.update(vars(opt))
-            val_loss, predictions, lang_stats = eval_utils_binary.eval_split(dp_model, crit, loader, eval_kwargs)
+            val_loss, predictions, lang_stats = eval_utils_two_layer.eval_split(dp_model, crit, loader, eval_kwargs)
 
             # Write validation result into summary
             add_summary_value(tb_summary_writer, 'validation loss', val_loss, iteration)

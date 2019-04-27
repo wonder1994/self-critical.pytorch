@@ -369,72 +369,7 @@ def get_arm_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, criti
 
 
 def get_ar_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic=None):
-    batch_size = fc_feats.size(0)
-    vocab_size = opt.vocab_size + 1
-    state = model.init_hidden(batch_size)
-    seq = fc_feats.new_zeros(batch_size, model.seq_length, dtype=torch.long)
-    unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8)
-    temperature = getattr(opt, 'temperature', 1.0)
-    mask_sum = 0
-    true_length = 0
-    pi_list = []
-    logprobs_list = []
-    for t in range(model.seq_length + 1):
-        if t == 0:
-            xt = model.img_embed(fc_feats)
-        else:
-            if t == 1:
-                it = fc_feats.data.new(batch_size).long().zero_()
-            xt = model.embed(it)
-
-        output, state = model.core(xt, state)
-        if t >= 1:
-            logprobs1 = model.logit(output)
-            logprobs = F.log_softmax(model.logit(output), dim=1)
-            probs = F.softmax(model.logit(output), dim=1)
-            pi = torch.from_numpy(np.random.dirichlet(np.ones(vocab_size), batch_size)).float().cuda()
-            mask = unfinished.float()
-            if temperature == 1.0:
-                it = torch.min(torch.log(pi) - logprobs1, 1)[1].unsqueeze(1)
-            else:
-                it = torch.min(torch.log(pi) - logprobs1 / temperature, 1)[1].unsqueeze(1)
-            it = it.view(-1).long()
-            pi_list.append(pi)
-            logprobs_list.append(logprobs1)
-            if t == 1:
-                unfinished = it > 0
-            else:
-                unfinished = unfinished * (it > 0)
-
-            it = it * unfinished.type_as(it)
-            seq[:, t-1] = it
-            true_length += 1
-            if unfinished.sum() == 0:
-                break
-    loss = fc_feats.new_zeros([])
-
-    ## evaluate reward
-    seq_per_img = batch_size // len(data['gts'])
-    gts = OrderedDict()
-    for i in range(len(data['gts'])):
-        gts[i] = [array_to_str(data['gts'][i][j]) for j in range(len(data['gts'][i]))]
-    seqs = seq.data.cpu().numpy()
-    res_ = []
-    gts_arm = {}
-    for i in range(batch_size):
-        res_.append({'image_id': i, 'caption': [array_to_str(seqs[i])]})
-        gts_arm[i] = gts[i // seq_per_img]
-    _, arm_metric_value = CiderD_scorer.compute_score(gts_arm, res_)
-    mask = fc_feats.new_ones(batch_size, dtype=torch.uint8)
-    for t in range(true_length):
-        f_delta = torch.from_numpy(np.repeat(np.expand_dims(arm_metric_value, 1), vocab_size, 1)).float().cuda() * (1.0 - vocab_size * pi_list[t])
-        if t > 0:
-            mask *= seq[:, t-1] > 0
-        f_delta = (f_delta.transpose(0, 1) * mask.float()).transpose(0, 1)
-        mask_sum += torch.sum(mask.float())
-        loss -= torch.sum(f_delta.detach() * logprobs_list[t])
-    loss = loss / mask_sum
-    return loss
+    return 0
 
 
 def get_rf_loss(model, fc_feats, att_feats, att_masks, data, opt, loader, critic=None, test_critic=False):
@@ -557,11 +492,12 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
     A_cat = torch.min(torch.log(pi) - logits, 1)[1].long()
     topk, indices = torch.topk(logits, ref_num, dim=1)
     random_ref = torch.topk(torch.rand((batch_size, vocab_size)), ref_num)[1]
-    f_delta = np.zeros([batch_size, vocab_size])
+    f_delta = torch.zeros(batch_size, vocab_size).float().cuda()
     if opt.ref_cat == 'random':
         R_cat_set = random_ref.cuda().long()
     elif opt.ref_cat == 'topaction':
         R_cat_set = indices.cuda().long()
+    tic = time()
     for i in range(ref_num):
         R_cat = R_cat_set[:, i]
         pseudo_actions_tmp = pseudo_action_fun(logits, A_cat, R_cat, pi)
@@ -569,6 +505,8 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
             pseudo_actions = pseudo_actions_tmp
         else:
             pseudo_actions = torch.cat([pseudo_actions, pseudo_actions_tmp], 1)
+    print('time for compute pseudo action', time()-tic)
+    tic = time()
     if unfinished.sum(0) != batch_size:
         pseudo_actions[(1 - unfinished), :] = A_cat[(1 - unfinished)].unsqueeze(1).repeat(1, vocab_size*ref_num)
     #print('time for pseudo action: ' + str(time() - tic))
@@ -663,13 +601,31 @@ def arsm_f_delta_fun_batch_torch(logits, pi, data, pre_seq, step, model, state, 
     arm_metric_matrix[arm_pseudo_index > 1, :] = np.reshape(arm_metric_value[arm_index], [-1, vocab_size * ref_num])
     if opt.arm_as_baseline == 1:
         return torch.from_numpy(arm_metric_matrix).float().cuda().mean(1)
+    print('time for evaluating pseudo action', time()-tic)
+    tic = time()
+    arm_metric_matrix_cuda = torch.from_numpy(arm_metric_matrix).float().cuda()
     for i in range(ref_num):
         R_cat = R_cat_set[:, i]
-        arm_metric_matrix_tmp = arm_metric_matrix[:, (vocab_size*i):(vocab_size*(i+1))]
-        f_delta_tmp = arm_metric_matrix_tmp - np.repeat(np.expand_dims(np.mean(arm_metric_matrix_tmp, 1), 1), vocab_size, 1)
-        f_delta_tmp = f_delta_tmp * np.repeat(np.expand_dims(1.0 - vocab_size * pi[index_batch, R_cat].cpu().numpy(), 1), vocab_size, 1)
+        arm_metric_matrix_tmp = arm_metric_matrix_cuda[:, (vocab_size*i):(vocab_size*(i+1))]
+        f_delta_tmp = (arm_metric_matrix_tmp.transpose(0, 1) - arm_metric_matrix_tmp.mean(1)).transpose(0,1)
+        f_delta_tmp = (f_delta_tmp.transpose(0, 1) * (1.0 - vocab_size * pi[index_batch, R_cat])).transpose(0, 1)
         f_delta += f_delta_tmp
-    return torch.from_numpy(f_delta/ref_num).float().cuda()
+        #print(pi[index_batch, R_cat])
+    # print('time for final pseudo action', time()-tic)
+    # tic = time()
+    # pi_set = torch.zeros(batch_size, ref_num).float().cuda()
+    # for i in range(ref_num):
+    #     R_cat = R_cat_set[:, i]
+    #     pi_set[:, i] = pi[index_batch, R_cat]
+    # arm_metric_matrix_2 = torch.ones(batch_size, vocab_size, ref_num).float().cuda() * -1
+    # index = torch.from_numpy((arm_pseudo_index > 1).astype(int)).type_as(unfinished)
+    # arm_metric_matrix_2[index, :, :] = torch.from_numpy(arm_metric_value[arm_index]).float().cuda().view(-1, vocab_size, ref_num)
+    # arm_metric_matrix_2_cuda = arm_metric_matrix_2
+    # f_delta_tmp = arm_metric_matrix_2_cuda - arm_metric_matrix_2_cuda.mean(1).unsqueeze(1).repeat(1, vocab_size, 1)
+    # #print(pi[index_batch, R_cat_set])
+    # f_delta_2 = (f_delta_tmp * (1 - vocab_size * pi_set).unsqueeze(1).repeat(1, vocab_size, 1)).mean(2)
+    # print('time for final pseudo action', time()-tic)
+    return f_delta/ref_num
 
 def pseudo_action_fun(logits, A_cat, R_cat, pi, temperature=1):
     #TODO: log pi.

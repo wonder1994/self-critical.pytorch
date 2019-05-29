@@ -192,7 +192,7 @@ class FCModel_binary(CaptionModel):
                         pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
                     it_depth = (pi > binary_softmax(phi_depth))  # int8
                     binary_code[:, t - 1, i] = it_depth.squeeze(1) * mask_depth
-                    output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - LogOnePlusExp(phi_depth)).squeeze(1)
+                    output_logit[:, t - 1, i] = (phi_depth * it_depth.type_as(phi_depth) - LogOnePlusExp(phi_depth)).squeeze(1) * mask_depth
                     code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)  # batch
                     if len(self.stop_list[i]) != 0:
                         mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(mask_depth)
@@ -206,62 +206,6 @@ class FCModel_binary(CaptionModel):
                 if unfinished.sum() == 0:
                     break
         return seq, output_logit
-
-    def sample_2_layer(self, fc_feats, att_feats, att_masks=None, opt={}, total_probs=False):
-        sample_max = opt.get('sample_max', 1)
-        beam_size = opt.get('beam_size', 1)
-        temperature = opt.get('temperature', 1.0)
-        batch_size = fc_feats.size(0)
-        state = self.init_hidden(batch_size)
-        seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long).cuda()
-        output_logit = fc_feats.new_zeros(batch_size, self.seq_length, self.depth).cuda()
-        unfinished = fc_feats.new_ones(batch_size, dtype=torch.uint8).cuda()
-        n_cluster = len(self.cluster_size)
-        for t in range(self.seq_length + 2):
-            if t == 0:
-                xt = self.img_embed(fc_feats)
-            else:
-                if t == 1: # input <bos>
-                    it = fc_feats.data.new(batch_size).long().zero_()
-                xt = self.embed(it)
-
-            output, state = self.core(xt, state)
-            phi = self.logit(output) # phi: batch, vocab-1
-            # sample the next_word
-            if t == self.seq_length + 1: # skip if we achieve maximum length
-                break
-            if t >= 1:
-                mask_depth = unfinished.clone()
-                code_sum = torch.zeros(batch_size, 1).float().cuda()
-                probs_step_1 = F.softmax(torch.cat([phi[:, :(n_cluster-1)], torch.zeros(batch_size, 1).float().cuda()], 1), 1)
-                if sample_max:
-                    it_1 = torch.max(probs_step_1.data, 1)[1].view(-1).cuda().long()
-                else:
-                    it_1 = torch.multinomial(probs_step_1.data, 1).cuda().squeeze(1)
-                it_2 = torch.zeros_like(it_1).cuda()
-                start = n_cluster - 1
-                for i in range(n_cluster):
-                    if self.cluster_size[i] != 1:
-                        index = it_1 == i
-                        if index.sum() != 0:
-                            probs_step_2 = F.softmax(torch.cat([phi[index, start:(start+self.cluster_size[i]-1)], torch.zeros(index.sum(), 1).float().cuda()], 1), 1)
-                            if sample_max:
-                                it_2[index] = torch.max(probs_step_2.data, 1)[1].view(-1).cuda().long()
-                            else:
-                                it_2[index] = torch.multinomial(probs_step_2.data, 1).cuda().squeeze(1)
-                    start = start + self.cluster_size[i]-1
-                code_sum = it_1 * (self.vocab_size + 1) + it_2
-                it = torch.from_numpy(code2vocab_fun(code_sum.cpu().numpy(), self.code2vocab)).cuda().long()
-                if t == 1:
-                    unfinished = it > 0
-                else:
-                    unfinished = unfinished * (it > 0)
-                it = it * unfinished.type_as(it)
-                seq[:, t-1] = it
-                if unfinished.sum() == 0:
-                    break
-        return seq, output_logit
-
 
     def word_completion(self, depth, phi, unfinished, code_sum, mask_depth, sample_max):
         batch_size = unfinished.size(0)

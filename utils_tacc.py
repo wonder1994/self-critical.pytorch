@@ -46,6 +46,9 @@ class RewardCriterion(nn.Module):
         reward = to_contiguous(reward).view(-1)
         mask = (seq>0).float()
         mask = to_contiguous(torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)).view(-1)
+        print(input.size())
+        print(reward.size())
+        print(mask.size())
         output = - input * reward * mask
         output = torch.sum(output) / torch.sum(mask)
 
@@ -64,26 +67,6 @@ class LanguageModelCriterion(nn.Module):
         output = torch.sum(output) / torch.sum(mask)
 
         return output
-class RewardCriterion_binary(nn.Module):
-    def __init__(self):
-        super(RewardCriterion_binary, self).__init__()
-
-    def forward(self, input, target, reward, depth):
-        # input: batch, length, depth, cuda
-        # target: batch, length, cuda
-        # reward: batch, length, cuda
-        # mask: batch, length, cuda,
-        # vocab2code: numpy, vocab - 1, depth
-        # phi_list: dict
-        mask = (target>0).float()
-        mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
-        batch_size, length, _ = input.size()
-        # not right
-        output = - input * (reward * mask).unsqueeze(2).repeat(1, 1, depth)
-        output = torch.sum(output) / torch.sum(mask)
-        return output
-
-
 
 class LanguageModelCriterion_binary(nn.Module):
     def __init__(self):
@@ -212,3 +195,4 @@ def build_optimizer(params, opt):
         return optim.Adam(params, opt.learning_rate, (opt.optim_alpha, opt.optim_beta), opt.optim_epsilon, weight_decay=opt.weight_decay)
     else:
         raise Exception("bad option opt.optim: {}".format(opt.optim))
+

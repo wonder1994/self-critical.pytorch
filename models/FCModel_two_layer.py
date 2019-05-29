@@ -203,26 +203,6 @@ class FCModel_two_layer(CaptionModel):
                     break
         return seq, output_logit
 
-
-    def word_completion(self, depth, phi, unfinished, code_sum, mask_depth, sample_max):
-        batch_size = unfinished.size(0)
-        for i in range(depth + 1, self.depth):
-            if mask_depth.sum() == 0:
-                break
-            phi_index = torch.from_numpy(map_phi(self.phi_list[i],
-                                                 np.expand_dims(code_sum * unfinished.cpu().numpy(), 1))).long().cuda()
-            phi_depth = phi.gather(1, phi_index)
-            if sample_max:
-                pi = 0.5
-            else:
-                pi = torch.from_numpy(np.random.uniform(size=[batch_size, 1])).float().cuda()
-            it_depth = (pi > binary_softmax(phi_depth))
-            code_sum += (it_depth.squeeze(1) * mask_depth).cpu().numpy() * np.power(2, i)
-            if len(self.stop_list[i]) != 0:
-                mask_depth *= torch.from_numpy(unfinished_fun(code_sum, self.stop_list[i])).cuda().type_as(
-                    mask_depth)
-        return code_sum
-
     def sentence_completion(self, step, unfinished, it, state, seqs, sample_max):
         batch_size = seqs.size(0)
         seqs_cp = seqs.clone()
@@ -264,7 +244,7 @@ class FCModel_two_layer(CaptionModel):
 
 
     def get_arm_loss_two_layer_fast(self, fc_feats, att_feats, att_masks, opt, data, loader):
-        sample_max = 0
+        sample_max = 1
         batch_size = fc_feats.size(0)
         state = self.init_hidden(batch_size)
         seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long).cuda()
@@ -292,7 +272,6 @@ class FCModel_two_layer(CaptionModel):
                 state_arm_list = [] # length 2
                 it_arm_list = []
                 unfinished_arm_list = []
-                map_index_list = [] # from previous index to currect index(nonunique to unique)
                 pi_list = []
                 phi_list = []
 
@@ -311,19 +290,19 @@ class FCModel_two_layer(CaptionModel):
                 pseudo_action_step_1 = pseudo_action_batch(pi_step_1, phi_pad_step_1.data.cpu().numpy()) #batch, n_cluster, n_cluster
                 pseudo_action_step_1 = np.reshape(pseudo_action_step_1, [unfinished_size, -1])
                 ## concate unique pseudo actions
-                pi_list.append(pi_step_1)
-                phi_list.append(phi_pad_step_1)
                 arm_pseudo_action_set, arm_index, arm_index_2, arm_pseudo_counts, arm_pseudo_index, \
                 counts_per_sample_list = unique_function(pseudo_action_step_1)
                 ## complete words
                 if np.sum(arm_pseudo_counts) !=0: #TODO: what if it ==0
                     arm_pseudo_action_set_list.append(arm_pseudo_action_set)
+                    pi_list.append(pi_step_1)
+                    phi_list.append(phi_pad_step_1)
                     arm_index_list.append(arm_index)
                     arm_index_2_list.append(arm_index_2)
                     arm_pseudo_counts_list.append(arm_pseudo_counts)
                     arm_pseudo_index_list.append(arm_pseudo_index)
                     counts_per_sample_list_list.append(counts_per_sample_list)
-                    seqs_arm_step_1 = seq[unfinished, :][arm_index_2, :]
+                    seqs_arm_step_1 = seq[unfinished, :][arm_index_2, :].clone()
                     unfinished_arm_step_1 = unfinished[unfinished][arm_index_2]
                     it_step_1 = torch.from_numpy(arm_pseudo_action_set).long().cuda()
                     phi_arm_step_1 = phi[unfinished, :][arm_index_2, :].clone()
@@ -357,7 +336,7 @@ class FCModel_two_layer(CaptionModel):
 
                 ### second depth:
                 probs_step_1 = F.softmax(
-                    torch.cat([phi[unfinished, :(n_cluster - 1)].clone(), torch.zeros(unfinished.sum(), 1).float().cuda()], 1), 1)
+                    torch.cat([phi[:, :(n_cluster - 1)], torch.zeros(batch_size, 1).float().cuda()], 1), 1)
                 if sample_max:
                     it_1 = torch.max(probs_step_1.data, 1)[1].view(-1).cuda().long()
                 else:
@@ -365,7 +344,7 @@ class FCModel_two_layer(CaptionModel):
                 it_2 = torch.zeros_like(it_1).cuda()
                 start = n_cluster - 1
                 for i in range(n_cluster):
-                    index = it_1 == i
+                    index = it_1[unfinished] == i
                     if index.sum() != 0:
                         # pseudo actions
                         effect_batch = index.sum()
@@ -387,11 +366,11 @@ class FCModel_two_layer(CaptionModel):
                         pi_list.append(pi_step_2)
                         phi_list.append(phi_pad_step_2)
 
-                        code_sum = it_1[index][arm_index_2] * (self.vocab_size + 1) + torch.from_numpy(np.array(arm_pseudo_action_set)).long().cuda()
+                        code_sum = it_1[unfinished][index][arm_index_2].clone() * (self.vocab_size + 1) + torch.from_numpy(np.array(arm_pseudo_action_set)).long().cuda()
                         it_step = torch.from_numpy(
                             code2vocab_fun(code_sum.cpu().numpy(), self.code2vocab)).cuda().long()
 
-                        seqs_arm_step_2 = seq[unfinished, :][index, :][arm_index_2, :]
+                        seqs_arm_step_2 = seq[unfinished, :][index, :][arm_index_2, :].clone()
                         unfinished_arm_step_2 = unfinished[unfinished][index][arm_index_2]
 
 
@@ -404,16 +383,19 @@ class FCModel_two_layer(CaptionModel):
                         state_arm_list.append(state_arm_step_2)
                         it_arm_list.append(it_step)
                         unfinished_arm_list.append(unfinished_arm_step_2)
-                        batch_index_list.append(torch.arange(batch_size)[unfinished])
-
-                        # main line
-                        probs_step_2 = F.softmax(torch.cat(
-                            [phi[unfinished, :][index, start:(start + self.cluster_size[i] - 1)].clone(),
-                             torch.zeros(index.sum(), 1).float().cuda()], 1), 1)
-                        if sample_max:
-                            it_2[index] = torch.max(probs_step_2.data, 1)[1].view(-1).cuda().long()
-                        else:
-                            it_2[index] = torch.multinomial(probs_step_2.data, 1).cuda().squeeze(1)
+                        batch_index_list.append(torch.arange(batch_size)[unfinished][index])
+                    start = start + self.cluster_size[i] - 1
+                start = n_cluster - 1
+                for i in range(n_cluster):
+                    if self.cluster_size[i] != 1:
+                        index = it_1 == i
+                        if index.sum() != 0:
+                            probs_step_2 = F.softmax(torch.cat([phi[index, start:(start + self.cluster_size[i] - 1)],
+                                                                torch.zeros(index.sum(), 1).float().cuda()], 1), 1)
+                            if sample_max:
+                                it_2[index] = torch.max(probs_step_2.data, 1)[1].view(-1).cuda().long()
+                            else:
+                                it_2[index] = torch.multinomial(probs_step_2.data, 1).cuda().squeeze(1)
                     start = start + self.cluster_size[i] - 1
                 if len(unfinished_arm_list) > 0:
                     unfinished_arm_straight = straight_fun(unfinished_arm_list)
@@ -450,24 +432,30 @@ class FCModel_two_layer(CaptionModel):
                                 np.expand_dims(np.concatenate([[0], np.cumsum(arm_pseudo_counts)[0:-1]]), 1),
                                 vocab_size * vocab_size, 1)
                             arm_index = np.reshape(arm_index, [-1])
-
+                            #print(i, batch_index[np.array(arm_index_2_list[i]).astype(int)])
                             arm_metric_matrix = np.reshape(arm_metric_value[arm_index], [-1, vocab_size, vocab_size])
                             arm_metric_matrix_cuda = torch.from_numpy(arm_metric_matrix).float().cuda()
                             f_delta = (arm_metric_matrix_cuda - arm_metric_matrix_cuda.mean(1).unsqueeze(1).repeat(1,vocab_size,1))
                             f_delta = (f_delta * (1 / vocab_size - torch.from_numpy(pi_list[i][arm_pseudo_index > 1]).float().cuda().unsqueeze(1).repeat(1,vocab_size,1))).sum(2)
                             f_delta = f_delta - f_delta[:, -1].unsqueeze(1).repeat(1, vocab_size) #TODO: verify formulation
-                            #loss = loss - (f_delta * phi_list[i][torch.from_numpy(arm_pseudo_index).cuda() > 1]).sum()
-                            loss = loss - (output).sum()
+                            loss = loss - (f_delta.detach() * phi_list[i][torch.from_numpy(arm_pseudo_index).cuda() > 1]).sum()
+                            if np.random.randint(200) == 1:
+                                print('step', t, 'vocab', i, 'average reward',
+                                      np.mean(arm_metric_value), 'ave pseudo num', np.mean(arm_pseudo_index))
+                    assert start_index == seqs_arm_completed.size(0)
                 code_sum = it_1 * (self.vocab_size + 1) + it_2
-                it[unfinished] = torch.from_numpy(code2vocab_fun(code_sum.cpu().numpy(), self.code2vocab)).cuda().long()
+                it = torch.from_numpy(code2vocab_fun(code_sum.cpu().numpy(), self.code2vocab)).cuda().long()
                 if t == 1:
                     unfinished = it > 0
                 else:
                     unfinished = unfinished * (it > 0)
                 it = it * unfinished.type_as(it)
                 seq[:, t - 1] = it
+                mask_sum += unfinished.sum()
                 if unfinished.sum() == 0:
                     break
+        # reward = reward_function(data, batch_size, seq, torch.arange(batch_size), gts)
+        # print('ave reward', np.mean(reward))
         return loss / mask_sum
 
 
@@ -550,17 +538,6 @@ def straight_fun(input):
             output = torch.cat([output, item], 0)
     return output
 
-def binary_softmax(phi):
-    result = torch.zeros_like(phi).float().cuda()
-    result[phi > 0] = torch.exp(-phi[phi > 0]) / (1.0 + torch.exp(-phi[phi > 0]))
-    result[phi <= 0] = 1.0 / (1.0 + torch.exp(phi[phi <= 0]))
-    return result
-
-def LogOnePlusExp(x):
-    result = torch.zeros_like(x).float().cuda()
-    result[x > 0] = (x[x > 0] + torch.log1p(torch.exp(-x[x > 0])))
-    result[x <= 0] = torch.log1p(torch.exp(x[x <= 0]))
-    return result
 
 def pseudo_action_swap_matrix(pi, phi):
     C = len(pi)

@@ -40,6 +40,7 @@ def train(opt):
     loader = DataLoader(opt)
     opt.vocab_size = loader.vocab_size
     opt.seq_length = loader.seq_length
+    print(opt.seq_length)
     print(opt.checkpoint_path)
     tb_summary_writer = tb and tb.SummaryWriter(opt.checkpoint_path)
 
@@ -185,7 +186,7 @@ def train(opt):
 
         # Load data from train split (0)
         data = loader.get_batch('train')
-        if data['bounds']['it_pos_now'] > 10000:
+        if data['bounds']['it_pos_now'] > 5000:
             loader.reset_iterator('train')
             continue
         dp_model.train()

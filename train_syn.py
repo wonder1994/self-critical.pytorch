@@ -16,11 +16,9 @@ from six.moves import cPickle
 import opts
 import models
 from dataloader import *
-import eval_utils_binary
+import eval_utils
 import misc.utils as utils
-from misc.rewards import get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss, get_rf_loss
-#from models.FCModel_binary import init_scorer
-from misc.rewards import init_scorer
+from misc.syn_util import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss
 from models.CriticModel import CriticModel
 from models.AttCriticModel import AttCriticModel, critic_loss_fun, target_critic_loss_fun, target_critic_loss_fun_mask
 try:
@@ -33,15 +31,50 @@ def add_summary_value(writer, key, value, iteration):
     if writer:
         writer.add_scalar(key, value, iteration)
 
+def reward_fun(labels, fc_feats, true_model):
+    labels_pad = torch.cat([torch.zeros(labels.size(0), 1).cuda().long(), labels], 1)
+    masks = (labels_pad > 0).float()
+    logit_reward = true_model(fc_feats, None, labels_pad, None)
+    reward = (logit_reward.gather(2, labels_pad[:, 1:].unsqueeze(2)).squeeze(2) * masks[:, 1:]).sum(1)
+    return reward
+
+def eval_utils_syn(dp_model, true_model, data_features, batch_size, crit):
+    data_num = data_features.shape[0]
+    num_batch = int(data_num / batch_size)
+    for iteration in range(num_batch):
+        start_index = (iteration*batch_size)
+        end_index = ((iteration+1)*batch_size)
+        fc_feats = torch.from_numpy(data_features[start_index:end_index, :]).cuda().float()
+        att_feats = None
+        att_masks = None
+        true_labels, _ = true_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
+        #print(true_labels)
+        true_labels = torch.cat([torch.zeros(true_labels.size(0), 1).cuda().long(), true_labels], 1)
+        masks = (true_labels > 0).float()
+        val_loss = crit(dp_model(fc_feats, att_feats, true_labels, att_masks), true_labels[:,1:], masks[:,1:])
+
+        labels, _ = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
+        labels = torch.cat([torch.zeros(labels.size(0), 1).cuda().long(), labels], 1)
+        masks = (labels > 0).float()
+        lang_stats = crit(true_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:])
+    return val_loss, lang_stats
+
 
 def train(opt):
     # opt.use_att = utils.if_use_att(opt.caption_model)
     opt.use_att = True
     if opt.use_box: opt.att_feat_size = opt.att_feat_size + 5
 
-    loader = DataLoader(opt)
-    opt.vocab_size = loader.vocab_size
-    opt.seq_length = loader.seq_length
+    opt.vocab_size = 50
+    opt.seq_length = 10
+    opt.fc_feat_size = 100
+    opt.train_true = True
+    opt.train_true_step = 100
+    np.random.seed(0)
+    data_num = 5000
+    data_features = np.random.normal(size=[data_num, opt.fc_feat_size])
+    test_data_num = 1000
+    test_data_features = np.random.normal(size=[test_data_num, opt.fc_feat_size])
     print(opt.checkpoint_path)
     tb_summary_writer = tb and tb.SummaryWriter(opt.checkpoint_path)
 
@@ -71,27 +104,31 @@ def train(opt):
     variance_history = histories.get('variance_history', {})
     time_history = histories.get('time_history', {})
 
-    loader.iterators = infos.get('iterators', loader.iterators)
-    loader.split_ix = infos.get('split_ix', loader.split_ix)
+
     if opt.load_best_score == 1:
         best_val_score = infos.get('best_val_score', None)
 
     model = models.setup(opt).cuda()
     dp_model = model
-
-
-
-
+    #TODO: save true model
+    true_model = models.setup(opt).cuda()
+    if vars(opt).get('start_from', None) is not None:
+        # check if all necessary files exist
+        assert os.path.isdir(opt.start_from)," %s must be a a path" % opt.start_from
+        assert os.path.isfile(os.path.join(opt.start_from,"infos_"+opt.id+".pkl")),"infos.pkl file does not exist in path %s"%opt.start_from
+        true_model.load_state_dict(torch.load(os.path.join(opt.start_from, 'truemodel.pth')))
+    true_model.eval()
     ######################### Actor-critic Training #####################################################################
 
     update_lr_flag = True
     # Assure in training mode
     dp_model.train()
-    #TODO: change this to a flag
-    crit = utils.LanguageModelCriterion_binary()
-    rl_crit = utils.RewardCriterion_binary()
+
+    crit = utils.LanguageModelCriterion()
+    rl_crit = utils.RewardCriterion()
 
     optimizer = utils.build_optimizer(model.parameters(), opt)
+    tm_optimizer = utils.build_optimizer(true_model.parameters(), opt)
     # Load the optimizer
     if vars(opt).get('start_from', None) is not None and os.path.isfile(os.path.join(opt.start_from,"optimizer.pth")):
         optimizer.load_state_dict(torch.load(os.path.join(opt.start_from, 'optimizer.pth')))
@@ -123,90 +160,89 @@ def train(opt):
 
             update_lr_flag = False
 
-        # Load data from train split (0)
-        data = loader.get_batch('train')
-        if data['bounds']['it_pos_now'] > 10000:
-            loader.reset_iterator('train')
-            continue
         dp_model.train()
 
         torch.cuda.synchronize()
         start = time.time()
         gen_result = None
-        tmp = [data['fc_feats'], data['att_feats'], data['labels'], data['masks'], data['att_masks']]
-        tmp = [_ if _ is None else torch.from_numpy(_).cuda() for _ in tmp]
-        fc_feats, att_feats, labels, masks, att_masks = tmp
+        start_index = (iteration*opt.batch_size) % data_num
+        end_index = start_index + opt.batch_size
+        fc_feats = torch.from_numpy(data_features[start_index:end_index, :]).cuda().float()
+        att_feats = None
+        att_masks = None
+        labels, total_logits = true_model(fc_feats, att_feats, att_masks, opt={'sample_max':1}, total_probs=True, mode='sample')
+        labels = torch.cat([torch.zeros(labels.size(0), 1).cuda().long(), labels], 1)
+        masks = (labels > 0).float()
+
+        # train true model:
+        if iteration < opt.train_true_step and opt.train_true:
+            tm_optimizer.zero_grad()
+            loss = -((total_logits * F.softmax(total_logits, 2)).sum(2)).mean()
+            loss.backward()
+            tm_optimizer.step()
+
         optimizer.zero_grad()
         if not sc_flag:
-            loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:], dp_model.depth,
-                        dp_model.vocab2code, dp_model.phi_list, dp_model.cluster_size)
+            loss = crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:,1:], masks[:,1:])
         else:
             if opt.rl_type == 'sc':
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
-                reward = get_self_critical_reward(dp_model, fc_feats, att_feats, att_masks, data, gen_result, opt)
-                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda(), dp_model.depth)
+                gen_result_sc, _ = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':1}, mode='sample')
+                reward = reward_fun(gen_result, fc_feats, true_model).unsqueeze(1).repeat(1, sample_logprobs.size(1))
+                reward_sc = reward_fun(gen_result_sc, fc_feats, true_model).unsqueeze(1).repeat(1, sample_logprobs.size(1))
+                reward = reward - reward_sc
+                loss = rl_crit(sample_logprobs, gen_result.data, reward)
+                reward = np.zeros([2, 2])
             elif opt.rl_type == 'reinforce':
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
-                reward = get_reward(data, gen_result, opt)
-                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda(), dp_model.depth)
-            elif opt.rl_type == 'arm':
-                loss = dp_model.get_arm_loss_binary_fast(fc_feats, att_feats, att_masks, opt, data, loader)
+                reward = reward_fun(gen_result, fc_feats, true_model).unsqueeze(1).repeat(1, sample_logprobs.size(1))
+                loss = rl_crit(sample_logprobs, gen_result.data, reward)
+                reward = np.zeros([2, 2])
+            elif opt.rl_type == 'reinforce_demean':
+                gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
+                reward = reward_fun(gen_result, fc_feats, true_model).unsqueeze(1).repeat(1, sample_logprobs.size(1))
+                loss = rl_crit(sample_logprobs, gen_result.data, reward-reward.mean())
+                reward = np.zeros([2, 2])
+            elif opt.rl_type == 'arsm':
+                loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, true_model, opt)
                 #print(loss)
                 reward = np.zeros([2,2])
-            elif opt.rl_type == 'rf4':
-                loss,_,_,_ = get_rf_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+            elif opt.rl_type == 'ars':
+                loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, true_model, opt, type='ars')
+                #print(loss)
+                reward = np.zeros([2,2])
+            elif opt.rl_type == 'ar':
+                loss = get_ar_loss(dp_model, fc_feats, att_feats, att_masks, true_model, opt)
                 # print(loss)
                 reward = np.zeros([2, 2])
-            elif opt.rl_type == 'ar':
-                loss = get_ar_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
-                reward = np.zeros([2,2])
             elif opt.rl_type =='mct_baseline':
                 opt.rf_demean = 0
-                gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats, att_masks, data,
-                                                                         opt, loader)
-                reward = get_reward(data, gen_result, opt)
-                reward_cuda = torch.from_numpy(reward).float().cuda()
-                mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
-                if opt.arm_step_sample == 'greedy':
-                    sample_logprobs = sample_logprobs * probs
-                loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - mct_baseline)
-            elif opt.rl_type == 'arsm_baseline':
-                opt.arm_as_baseline = 1
-                opt.rf_demean = 0
-                gen_result, sample_logprobs, probs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
-                reward = get_reward(data, gen_result, opt)
-                reward_cuda = torch.from_numpy(reward).float().cuda()
-                arm_baseline[arm_baseline < 0] = reward_cuda[arm_baseline < 0]
-                if opt.arm_step_sample == 'greedy' and False:
-                    sample_logprobs = sample_logprobs * probs
-                loss = rl_crit(sample_logprobs, gen_result.data, reward_cuda - arm_baseline)
-            elif opt.rl_type == 'ars_indicator':
-                opt.arm_as_baseline = 1
-                opt.rf_demean = 0
-                gen_result, sample_logprobs, probs, arm_baseline = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
-                reward = get_self_critical_reward(dp_model, fc_feats, att_feats, att_masks, data, gen_result, opt)
-                reward_cuda = torch.from_numpy(reward).float().cuda()
-                loss = rl_crit(sample_logprobs, gen_result.data, reward_cuda * arm_baseline)
+                gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats, att_masks,
+                                                                         opt, true_model)
+                reward = reward_fun(gen_result, fc_feats, true_model).unsqueeze(1).repeat(1, sample_logprobs.size(1))
+                reward_cuda = reward
+                #mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
+                loss = rl_crit(sample_logprobs, gen_result.data, reward - mct_baseline)
         if opt.mle_weights != 0:
             loss += opt.mle_weights * crit(dp_model(fc_feats, att_feats, labels, att_masks), labels[:, 1:], masks[:, 1:])
         #TODO make sure all sampling replaced by greedy for critic
         #### update the actor
         loss.backward()
-        # with open(os.path.join(opt.checkpoint_path, 'embeddings.pkl'), 'wb') as f:
+        # with open(os.path.join(opt.checkpoint_path, 'best_embed.pkl'), 'wb') as f:
         #     cPickle.dump(list(dp_model.embed.parameters())[0].data.cpu().numpy(), f)
+        # with open(os.path.join(opt.checkpoint_path, 'best_logit.pkl'), 'wb') as f:
+        #     cPickle.dump(list(dp_model.logit.parameters())[0].data.cpu().numpy(), f)
         ## compute variance
         gradient = torch.zeros([0]).cuda()
         for i in model.parameters():
             gradient = torch.cat((gradient, i.grad.view(-1)), 0)
-        first_order = 0.999 * first_order + 0.001 * gradient
-        second_order = 0.999 * second_order + 0.001 * gradient.pow(2)
+        first_order = 0.9999 * first_order + 0.0001 * gradient
+        second_order = 0.9999 * second_order + 0.0001 * gradient.pow(2)
         # print(torch.max(torch.abs(gradient)))
         variance = torch.mean(torch.abs(second_order - first_order.pow(2))).item()
         if opt.rl_type != 'arsm' or not sc_flag:
             utils.clip_gradient(optimizer, opt.grad_clip)
         optimizer.step()
-        # ### update the critic
-
         train_loss = loss.item()
         torch.cuda.synchronize()
         end = time.time()
@@ -217,11 +253,11 @@ def train(opt):
                 print(opt.checkpoint_path)
             else:
                 print("iter {} (epoch {}), avg_reward = {:.3f}, variance = {:g}, time/batch = {:.3f}" \
-                      .format(iteration, epoch, np.mean(reward[:, 0]), variance, end - start))
+                      .format(iteration, epoch, reward.mean(), variance, end - start))
 
         # Update the iteration and epoch
         iteration += 1
-        if data['bounds']['wrapped']:
+        if (iteration*opt.batch_size) % data_num == 0:
             epoch += 1
             update_lr_flag = True
 
@@ -231,10 +267,10 @@ def train(opt):
             add_summary_value(tb_summary_writer, 'learning_rate', opt.current_lr, iteration)
             add_summary_value(tb_summary_writer, 'scheduled_sampling_prob', model.ss_prob, iteration)
             if sc_flag:
-                add_summary_value(tb_summary_writer, 'avg_reward', np.mean(reward), iteration)
+                add_summary_value(tb_summary_writer, 'avg_reward', reward.mean(), iteration)
                 add_summary_value(tb_summary_writer, 'variance', variance, iteration)
 
-            loss_history[iteration] = train_loss if not sc_flag else np.mean(reward)
+            #loss_history[iteration] = train_loss if not sc_flag else reward.mean()
             lr_history[iteration] = opt.current_lr
             ss_prob_history[iteration] = model.ss_prob
             variance_history[iteration] = variance
@@ -244,47 +280,32 @@ def train(opt):
         # make evaluation on validation set, and save model
         if (iteration % opt.save_checkpoint_every == 0):
             # eval model
-            eval_kwargs = {'split': 'val',
-                            'dataset': opt.input_json}
-            eval_kwargs.update(vars(opt))
-            val_loss, predictions, lang_stats = eval_utils_binary.eval_split(dp_model, crit, loader, eval_kwargs)
 
+            val_loss, lang_stats = eval_utils_syn(dp_model, true_model, test_data_features, opt.batch_size, crit)
+
+            lang_stats = lang_stats.item()
+            val_loss = val_loss.item()
             # Write validation result into summary
             add_summary_value(tb_summary_writer, 'validation loss', val_loss, iteration)
-            if lang_stats is not None:
-                for k,v in lang_stats.items():
-                    add_summary_value(tb_summary_writer, k, v, iteration)
-            val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
-
+            val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats}
             # Save model if is improving on validation result
-            if opt.language_eval == 1:
-                current_score = lang_stats['CIDEr']
-            else:
-                current_score = - val_loss
-
-            best_flag = False
+            print('loss', val_loss, 'lang_stats', lang_stats)
             if True: # if true
-                if best_val_score is None or current_score > best_val_score:
-                    best_val_score = current_score
-                    best_flag = True
+                checkpoint_path = os.path.join(opt.checkpoint_path, 'model.pth')
                 if not os.path.isdir(opt.checkpoint_path):
                     os.mkdir(opt.checkpoint_path)
-                checkpoint_path = os.path.join(opt.checkpoint_path, 'model.pth')
                 torch.save(model.state_dict(), checkpoint_path)
-                checkpoint_path = os.path.join(opt.checkpoint_path, opt.critic_model + '_model.pth')
+                checkpoint_path = os.path.join(opt.checkpoint_path, 'truemodel.pth')
+                torch.save(true_model.state_dict(), checkpoint_path)
                 print("model saved to {}".format(checkpoint_path))
                 optimizer_path = os.path.join(opt.checkpoint_path, 'optimizer.pth')
                 torch.save(optimizer.state_dict(), optimizer_path)
-
                 # Dump miscalleous informations
                 infos['iter'] = iteration
                 infos['epoch'] = epoch
-                infos['iterators'] = loader.iterators
-                infos['split_ix'] = loader.split_ix
                 infos['best_val_score'] = best_val_score
                 infos['opt'] = opt
-                infos['vocab'] = loader.get_vocab()
-
+                infos['vocab'] = opt.vocab_size
                 histories['val_result_history'] = val_result_history
                 histories['loss_history'] = loss_history
                 histories['critic_loss_history'] = critic_loss_history
@@ -297,13 +318,6 @@ def train(opt):
                     cPickle.dump(infos, f)
                 with open(os.path.join(opt.checkpoint_path, 'histories_'+opt.id+'.pkl'), 'wb') as f:
                     cPickle.dump(histories, f)
-
-                if best_flag:
-                    checkpoint_path = os.path.join(opt.checkpoint_path, 'model-best.pth')
-                    torch.save(model.state_dict(), checkpoint_path)
-                    print("model saved to {}".format(checkpoint_path))
-                    with open(os.path.join(opt.checkpoint_path, 'infos_'+opt.id+'-best.pkl'), 'wb') as f:
-                        cPickle.dump(infos, f)
 
         # Stop if reaching max epochs
         if epoch >= opt.max_epochs and opt.max_epochs != -1:

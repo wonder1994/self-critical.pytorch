@@ -35,3 +35,159 @@ print(data_rf_nodemean['val_result_history'][i*10000 + 10000]['lang_stats'])
 
 with open('binary_tree_coding_2_layer.pkl') as a:
     data_rf_nodemean = pickle.load(a)
+
+data_rf_nodemean['val_result_history'][400000]['lang_stats']
+
+
+
+import pickle
+
+with open('histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+
+
+ars_5_sync_100_10/
+
+
+import pickle
+
+with open('ars_1_sync_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('ars_1_sync_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+
+import pickle
+
+with open('ars_5_sync_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('ars_5_sync_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+import pickle
+
+with open('ars_10_sync_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('ars_10_sync_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+import pickle
+
+with open('rf_sync_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('rf_sync_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+import pickle
+
+with open('sc_sync_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('sc_sync_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+import pickle
+
+with open('ars_5_sync_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('ars_5_sync_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+import pickle
+
+with open('mle_sync_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('mle_sync_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+import pickle
+
+with open('arsm_100_10/histories_fc.pkl') as a:
+    data = pickle.load(a)
+data['loss_history'] = 0
+for i in data['val_result_history']:
+    #print(data['val_result_history'][i])
+    #print(data['val_result_history'][i]['lang_stats'])
+    data['val_result_history'][i]['lang_stats'] = data['val_result_history'][i]['lang_stats'].item()
+    data['val_result_history'][i]['loss'] = data['val_result_history'][i]['loss'].item()
+from six.moves import cPickle
+with open(('arsm_100_10/histories_fc.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+
+
+import pickle
+from six.moves import cPickle
+with open('infos_fc-best.pkl') as a:
+    data = pickle.load(a)
+data['opt']['input_fc_dir'] = '/datadrive//IC/data/cocotalk_fc'
+
+
+with open(('infos_fc-best.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+
+
+with open('histories_fc.pkl', 'rb+') as a:
+    data = pickle.load(a)
+
+
+

@@ -44,7 +44,8 @@ def parse_opt():
                     help='2048 for resnet, 512 for vgg')
     parser.add_argument('--logit_layers', type=int, default=1,
                     help='number of layers in the RNN')
-
+    parser.add_argument('--device', type=int, default=1,
+                        help='device to use')
 
     parser.add_argument('--use_bn', type=int, default=0,
                     help='If 1, then do batch_normalization first in att_embed, if 2 then do bn both in the beginning and the end of att_embed')

@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import *
+import numpy as np
 import misc.utils as utils
 
 from .CaptionModel import CaptionModel
@@ -202,3 +203,119 @@ class FCModel(CaptionModel):
             return seq, seqLogprobs_total
         else:
             return seq, seqLogprobs
+
+    def _arm_sample(self, fc_feats, att_feats, att_masks=None, opt={}):
+        sample_max = opt.get('sample_max', 0)
+        temperature = opt.get('temperature', 1.0)
+        batch_size = fc_feats.size(0)
+
+        state_list = []
+
+        state = self.init_hidden(batch_size)
+
+        seq = fc_feats.new_zeros(batch_size, self.seq_length, dtype=torch.long)
+        seqLogits = fc_feats.new_zeros(self.seq_length, batch_size, self.vocab_size + 1)
+
+        for t in range(0, self.seq_length + 1):
+            if t == 0:
+                xt = self.img_embed(fc_feats)
+            else:
+                if t == 1:  # input <bos>
+                    it = fc_feats.data.new(batch_size).long().zero_()
+                xt = self.embed(it)
+
+            output, state = self.core(xt, state)
+            logits = self.logit(output)
+            logprobs = F.log_softmax(logits, dim=1)
+
+            # sample the next_word
+            if sample_max:
+                sampleLogprobs, it = torch.max(logprobs.data, 1)
+                it = it.view(-1).long()
+            else:
+                # if temperature == 1.0:
+                #     prob_prev = torch.exp(logprobs.data).cpu()  # fetch prev distribution: shape Nx(M+1)
+                # else:
+                #     # scale logprobs by temperature
+                #     prob_prev = torch.exp(torch.div(logprobs.data, temperature)).cpu()
+                pi = torch.from_numpy(np.random.uniform(0, 1, [logits.shape[0], self.vocab_size + 1])).float().cuda()
+                pi = -torch.log(pi)
+                it = torch.min(torch.log(pi) - logits, 1)[1].unsqueeze(1)
+                # it = torch.multinomial(prob_prev, 1).cuda()
+
+                sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
+                it = it.view(-1).long()  # and flatten indices for downstream processing
+
+            if t >= 1:
+                # stop when all finished
+                if t == 1:
+                    unfinished = it > 0
+                else:
+                    unfinished = unfinished * (it > 0)
+                it = it * unfinished.type_as(it)
+                seq[:, t - 1] = it  # seq[t] the input of t+2 time step
+                seqLogits[t - 1, :, :] = logits
+
+            state_h, state_c = state
+            state_list.append((state_h.cpu().data, state_c.cpu().data))
+
+            if t >= 1 and unfinished.sum() == 0:
+                break
+
+        eff_length = (seq > 0).sum().float()
+
+        return seq, seqLogits, eff_length, state_list
+
+    def _arm_pseudo_sample(self, t_start, it, state, seq, opt={}):
+        sample_max = opt.get('sample_max', 1)
+        temperature = opt.get('temperature', 1.0)
+
+        it = it.clone()
+        state_h, state_c = state
+        state = (state_h.clone(), state_c.clone())
+        seq = seq.clone()
+
+        # self.core.share_memory()
+
+        # Determines where to start to sample to the end for reward evaluation.
+
+        assert t_start > 0
+
+        # input the previous states and current it, and sample to the end
+
+        for t in range(t_start, self.seq_length + 1):
+
+            if t == t_start:
+                unfinished = it > 0
+            else:
+                unfinished = unfinished * (it > 0)
+            it = it * unfinished.type_as(it)
+            seq[:, t - 1] = it
+
+            if unfinished.sum() == 0:
+                break
+
+            xt = self.embed(it)
+
+            output, state = self.core(xt, state)
+            logits = self.logit(output)
+            logprobs = F.log_softmax(logits, dim=1)
+
+            # sample the next_word
+            if sample_max:
+                sampleLogprobs, it = torch.max(logprobs.data, 1)
+                it = it.view(-1).long()
+            else:
+                # if temperature == 1.0:
+                #     prob_prev = torch.exp(logprobs.data).cpu()  # fetch prev distribution: shape Nx(M+1)
+                # else:
+                #     # scale logprobs by temperature
+                #     prob_prev = torch.exp(torch.div(logprobs.data, temperature)).cpu()
+                pi = torch.from_numpy(np.random.uniform(0, 1, [logits.shape[0], self.vocab_size + 1])).float().cuda()
+                pi = -torch.log(pi)
+                it = torch.min(torch.log(pi) - logits, 1)[1].unsqueeze(1)
+                # it = torch.multinomial(prob_prev, 1).cuda()
+                sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
+                it = it.view(-1).long()  # and flatten indices for downstream processing
+
+        return seq

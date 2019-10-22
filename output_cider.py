@@ -39,11 +39,39 @@ with open('binary_tree_coding_2_layer.pkl') as a:
 data_rf_nodemean['val_result_history'][400000]['lang_stats']
 
 
+import pickle
+with open('histories_att2in.pkl') as a:
+    data = pickle.load(a)
+
+for i in data['pseudo_num_length_history']:
+    if type(data['pseudo_num_length_history'][i]).__module__ != 'numpy':
+      data['pseudo_num_length_history'][i] = data['pseudo_num_length_history'][i].data.cpu().numpy()
+from six.moves import cPickle
+with open(('histories_att2in.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+
+data['first_order_history'] = data['first_order_history'].data.cpu().numpy()
+data['second_order_history'] = data['second_order_history'].data.cpu().numpy()
+
+
+from six.moves import cPickle
+with open(('histories_att2in.pkl'), 'wb') as f:
+    cPickle.dump(data, f)
+
+
+
+
+
 
 import pickle
-
 with open('histories_fc.pkl') as a:
     data = pickle.load(a)
+data['val_result_history'][520000]['lang_stats']
+data['pseudo_num_history'][520000]
+
+
+
 data['loss_history'] = 0
 for i in data['val_result_history']:
     #print(data['val_result_history'][i])

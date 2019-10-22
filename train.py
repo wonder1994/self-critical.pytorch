@@ -18,7 +18,7 @@ import models
 from dataloader import *
 import eval_utils
 import misc.utils as utils
-from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss, get_mct_loss, get_ar_loss, get_rf_loss
+from misc.rewards import init_scorer, get_self_critical_reward, get_reward, get_arm_loss_daniel, get_mct_loss, get_ar_loss, get_rf_loss
 from models.CriticModel import CriticModel
 from models.AttCriticModel import AttCriticModel, critic_loss_fun, target_critic_loss_fun, target_critic_loss_fun_mask
 try:
@@ -33,6 +33,7 @@ def add_summary_value(writer, key, value, iteration):
 
 
 def train(opt):
+    torch.cuda.set_device(opt.device)
     # opt.use_att = utils.if_use_att(opt.caption_model)
     opt.use_att = True
     if opt.use_box: opt.att_feat_size = opt.att_feat_size + 5
@@ -69,6 +70,15 @@ def train(opt):
     ss_prob_history = histories.get('ss_prob_history', {})
     variance_history = histories.get('variance_history', {})
     time_history = histories.get('time_history', {})
+    pseudo_num_history = histories.get('pseudo_num_history', {})
+    pseudo_num_length_history = histories.get('pseudo_num_length_history', {})
+    pseudo_num_batch_history = histories.get('pseudo_num_batch_history', {})
+    sum_logits_history = histories.get('sum_logits_history', {})
+    reward_main_history = histories.get('reward_main_history', {})
+    first_order = histories.get('first_order_history', np.zeros(1))
+    second_order = histories.get('second_order_history', np.zeros(1))
+    first_order = torch.from_numpy(first_order).float().cuda()
+    second_order = torch.from_numpy(second_order).float().cuda()
 
     loader.iterators = infos.get('iterators', loader.iterators)
     loader.split_ix = infos.get('split_ix', loader.split_ix)
@@ -114,7 +124,7 @@ def train(opt):
         fc_feats, att_feats, labels, masks, att_masks = tmp
         critic_model.train()
         critic_optimizer.zero_grad()
-        assert opt.critic_model == 'att_critic_vocab'
+        # assert opt.critic_model == 'att_critic_vocab'
         # crit_loss, reward, std = critic_loss_fun(fc_feats, att_feats, att_masks, dp_model, critic_model, opt, data)
         crit_loss, reward, std = target_critic_loss_fun_mask(fc_feats, att_feats, att_masks, dp_model, critic_model, opt, data, target_critic, target_actor)
         crit_loss.backward()
@@ -123,7 +133,7 @@ def train(opt):
         for cp, tp in zip(critic_model.parameters(), target_critic.parameters()):
             tp.data = tp.data + opt.gamma_critic * (cp.data - tp.data)
         crit_train_loss = crit_loss.item()
-        torch.cuda.synchronize
+        torch.cuda.synchronize()
         end = time.time()
         error_sum += crit_train_loss**0.5-std
         if (critic_iter % opt.losses_log_every == 0):
@@ -157,8 +167,8 @@ def train(opt):
     if vars(opt).get('start_from', None) is not None and os.path.isfile(os.path.join(opt.start_from,"optimizer.pth")):
         optimizer.load_state_dict(torch.load(os.path.join(opt.start_from, 'optimizer.pth')))
 
-    first_order = 0
-    second_order = 0
+    # first_order = 0
+    # second_order = 0
     while True:
         if update_lr_flag:
                 # Assign the learning rate
@@ -186,9 +196,9 @@ def train(opt):
 
         # Load data from train split (0)
         data = loader.get_batch('train')
-        if data['bounds']['it_pos_now'] > 5000:
-            loader.reset_iterator('train')
-            continue
+        # if data['bounds']['it_pos_now'] > 5000:
+        #     loader.reset_iterator('train')
+        #     continue
         dp_model.train()
         critic_model.eval()
 
@@ -206,12 +216,17 @@ def train(opt):
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
                 reward = get_self_critical_reward(dp_model, fc_feats, att_feats, att_masks, data, gen_result, opt)
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
+                pseudo_num = 0
+                pseudo_num_length = 0
             elif opt.rl_type == 'reinforce':
                 gen_result, sample_logprobs = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max':0}, mode='sample')
                 reward = get_reward(data, gen_result, opt)
                 loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda())
+                pseudo_num_length = 0
+                pseudo_num = 0
+
             elif opt.rl_type == 'arsm':
-                loss = get_arm_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
+                loss, pseudo_num, pseudo_num_length, pseudo_num_batch, rewards_main, sum_logits = get_arm_loss_daniel(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 #print(loss)
                 reward = np.zeros([2,2])
             elif opt.rl_type == 'rf4':
@@ -231,11 +246,85 @@ def train(opt):
             elif opt.rl_type == 'ar':
                 loss = get_ar_loss(dp_model, fc_feats, att_feats, att_masks, data, opt, loader)
                 reward = np.zeros([2,2])
+            elif opt.rl_type == 'mct':
+                opt.rf_demean = 0
+                gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats,
+                                                                                att_masks, data,
+                                                                                opt, loader)
+                reward = get_reward(data, gen_result, opt)
+                pseudo_num = 0
+                pseudo_num_length = 0
+                reward_cuda = torch.from_numpy(reward).float().cuda()
+                mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
+                final_reward = torch.cat([mct_baseline[:, 1:], reward_cuda[:, 0:1]], 1)
+                final_reward = final_reward - torch.mean(final_reward)
+                if opt.arm_step_sample == 'greedy':
+                    sample_logprobs = sample_logprobs * probs
+                loss = rl_crit(sample_logprobs, gen_result.data, final_reward)
+            elif opt.rl_type == 'mct_sc':
+                opt.rf_demean = 0
+                gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats,
+                                                                                att_masks, data,
+                                                                                opt, loader)
+                reward = get_reward(data, gen_result, opt)
+                pseudo_num = 0
+                pseudo_num_length = 0
+                reward_cuda = torch.from_numpy(reward).float().cuda()
+                mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
+                final_reward = torch.cat([mct_baseline[:, 1:], reward_cuda[:, 0:1]], 1)
+                gen_result_sc, sample_logprobs_sc = dp_model(fc_feats, att_feats, att_masks, opt={'sample_max': 1},
+                                                       mode='sample')
+                reward = get_reward(data, gen_result_sc, opt)
+                final_reward = final_reward - torch.from_numpy(reward).float().cuda()
+                loss = rl_crit(sample_logprobs, gen_result.data, final_reward)
+            elif opt.rl_type == 'mct_critic':
+                #TODO change the critic to attention
+                if opt.critic_model == 'state_critic':
+                    opt.rf_demean = 0
+                    gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats,
+                                                                                    att_masks, data,
+                                                                                    opt, loader)
+                    gen_result_pad = torch.cat(
+                        [gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+                    critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks).squeeze(2)
+                    reward, std = get_reward(data, gen_result, opt, critic=True)
+                    pseudo_num = 0
+                    pseudo_num_length = 0
+                    reward_cuda = torch.from_numpy(reward).float().cuda()
+                    mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
+                    final_reward = torch.cat([mct_baseline[:, 1:], reward_cuda[:, 0:1]], 1)
+                    print(critic_value.shape)
+                    loss = rl_crit(sample_logprobs, gen_result.data, final_reward - critic_value)
+
+
+
+
+                    critic_value, gen_result, sample_logprobs = critic_model(dp_model, fc_feats, att_feats, opt, att_masks)
+                    reward, std = get_reward(data, gen_result, opt, critic=True)
+                    loss = rl_crit(sample_logprobs, gen_result.data, torch.from_numpy(reward).float().cuda() - critic_value[:,:-1].data)
+                elif opt.critic_model == 'att_critic':
+                    opt.rf_demean = 0
+                    gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats,
+                                                                                    att_masks, data,
+                                                                                    opt, loader)
+                    gen_result_pad = torch.cat(
+                        [gen_result.new_zeros(gen_result.size(0), 1, dtype=torch.long), gen_result], 1)
+                    critic_value = critic_model(gen_result_pad, fc_feats, att_feats, True, opt, att_masks).squeeze(2)
+                    reward, std = get_reward(data, gen_result, opt, critic=True)
+                    pseudo_num = 0
+                    pseudo_num_length = 0
+                    reward_cuda = torch.from_numpy(reward).float().cuda()
+                    mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
+                    final_reward = torch.cat([mct_baseline[:, 1:], reward_cuda[:, 0:1]], 1)
+                    print(critic_value.shape)
+                    loss = rl_crit(sample_logprobs, gen_result.data, final_reward - critic_value)
             elif opt.rl_type =='mct_baseline':
                 opt.rf_demean = 0
                 gen_result, sample_logprobs, probs, mct_baseline = get_mct_loss(dp_model, fc_feats, att_feats, att_masks, data,
                                                                          opt, loader)
                 reward = get_reward(data, gen_result, opt)
+                pseudo_num = 0
+                pseudo_num_length = 0
                 reward_cuda = torch.from_numpy(reward).float().cuda()
                 mct_baseline[mct_baseline < 0] = reward_cuda[mct_baseline < 0]
                 if opt.arm_step_sample == 'greedy':
@@ -329,7 +418,7 @@ def train(opt):
             critic_model.train()
             utils.set_lr(critic_optimizer, opt.critic_learning_rate)
             critic_optimizer.zero_grad()
-            assert opt.critic_model == 'att_critic_vocab'
+            #assert opt.critic_model == 'att_critic_vocab'
             crit_loss, reward, std = target_critic_loss_fun_mask(fc_feats, att_feats, att_masks, dp_model, critic_model, opt,
                                                             data, target_critic, target_actor, gen_result=gen_result, sample_logprobs_total=sample_logprobs_total, reward=reward)
             crit_loss.backward()
@@ -358,6 +447,7 @@ def train(opt):
             else:
                 print("iter {} (epoch {}), avg_reward = {:.3f}, variance = {:g}, time/batch = {:.3f}" \
                       .format(iteration, epoch, np.mean(reward[:, 0]), variance, end - start))
+                print("pseudo num: ", pseudo_num)
 
         # Update the iteration and epoch
         iteration += 1
@@ -379,6 +469,19 @@ def train(opt):
             lr_history[iteration] = opt.current_lr
             ss_prob_history[iteration] = model.ss_prob
             variance_history[iteration] = variance
+            pseudo_num_history[iteration] = pseudo_num
+            reward_main_history[iteration] = rewards_main
+            #print(pseudo_num_length)
+            #print(type(pseudo_num_length).__module__)
+            if type(pseudo_num_length).__module__ != 'torch':
+                print('not right')
+                pseudo_num_length_history[iteration] = pseudo_num_length
+                pseudo_num_batch_history[iteration] = pseudo_num_batch
+                sum_logits_history[iteration] = sum_logits
+            else:
+                pseudo_num_length_history[iteration] = pseudo_num_length.data.cpu().numpy()
+                pseudo_num_batch_history[iteration] = pseudo_num_batch.data.cpu().numpy()
+                sum_logits_history[iteration] = sum_logits.data.cpu().numpy()
             time_history[iteration] = end - start
 
 
@@ -433,7 +536,14 @@ def train(opt):
                 histories['lr_history'] = lr_history
                 histories['ss_prob_history'] = ss_prob_history
                 histories['variance_history'] = variance_history
+                histories['pseudo_num_history'] = pseudo_num_history
+                histories['pseudo_num_length_history'] = pseudo_num_length_history
+                histories['pseudo_num_batch_history'] = pseudo_num_batch_history
+                histories['sum_logits_history'] = sum_logits_history
+                histories['reward_main_history'] = reward_main_history
                 histories['time'] = time_history
+                histories['first_order_history'] = first_order.data.cpu().numpy()
+                histories['second_order_history'] = second_order.data.cpu().numpy()
                 # histories['variance'] = 0
                 with open(os.path.join(opt.checkpoint_path, 'infos_'+opt.id+'.pkl'), 'wb') as f:
                     cPickle.dump(infos, f)
